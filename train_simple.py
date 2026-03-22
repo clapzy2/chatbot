@@ -14,7 +14,6 @@ from peft import LoraConfig, get_peft_model, TaskType
 print("🔄 Загружаем модель в 4-bit...")
 model_name = "mistralai/Mistral-7B-Instruct-v0.3"
 
-# 4-bit quantization
 bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
     bnb_4bit_compute_dtype=torch.float16,
@@ -31,58 +30,64 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 
 tokenizer.pad_token = tokenizer.eos_token
-
-# Включаем gradient checkpointing для экономии памяти
 model.gradient_checkpointing_enable()
 
-# ========== LoRA конфигурация ==========
+# LoRA
 lora_config = LoraConfig(
-    r=8,                       # ранг
-    lora_alpha=16,             # масштабирующий коэффициент
+    r=8,
+    lora_alpha=16,
     target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
     lora_dropout=0.05,
     bias="none",
     task_type=TaskType.CAUSAL_LM,
 )
-
-# Применяем LoRA
 model = get_peft_model(model, lora_config)
-
-# Выводим количество обучаемых параметров
 model.print_trainable_parameters()
 
 print("📚 Загружаем датасет...")
 with open("formatted_dataset.json", "r", encoding="utf-8") as f:
     data = json.load(f)
 
-def format_conversation(item):
+# Преобразуем данные в простые тексты: пользовательский запрос + ответ
+def create_text(item):
     messages = item["conversations"]
-    text = tokenizer.apply_chat_template(messages, tokenize=False)
+    user_content = messages[0]["content"]
+    assistant_content = messages[1]["content"]
+    # Формат для Mistral instruct
+    text = f"<s>[INST] {user_content} [/INST] {assistant_content} </s>"
     return {"text": text}
 
 dataset = Dataset.from_list(data)
-dataset = dataset.map(format_conversation)
+dataset = dataset.map(create_text)
 
 def tokenize_function(examples):
-    return tokenizer(examples["text"], truncation=True, max_length=512, padding="max_length")
+    return tokenizer(
+        examples["text"],
+        truncation=True,
+        padding="max_length",
+        max_length=512,
+        return_tensors="pt",
+    )
 
-tokenized_dataset = dataset.map(tokenize_function, batched=True)
+# Токенизируем и удаляем исходные колонки
+tokenized_dataset = dataset.map(tokenize_function, batched=True, remove_columns=["conversations", "text"])
 
-# ========== Аргументы обучения ==========
+# Для LM обучение нам нужны input_ids и attention_mask, labels = input_ids (копия)
+tokenized_dataset = tokenized_dataset.map(lambda x: {"labels": x["input_ids"]})
+
 training_args = TrainingArguments(
     output_dir="./mistral-finetuned",
     num_train_epochs=3,
-    per_device_train_batch_size=2,      # можно попробовать 4, если хватит памяти
+    per_device_train_batch_size=2,
     gradient_accumulation_steps=4,
     warmup_steps=10,
     logging_steps=10,
     save_steps=100,
     learning_rate=2e-4,
-    fp16=True,                           # для RTX 4090
+    fp16=True,
     logging_dir="./logs",
     report_to="none",
     save_total_limit=2,
-    remove_unused_columns=False,
 )
 
 data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
