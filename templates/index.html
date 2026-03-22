@@ -311,7 +311,9 @@
                 if (fragments && fragments.length > 0) {
                     contentHTML += `<details class="fragments"><summary>🔍 Показать найденные фрагменты (${fragments.length})</summary>`;
                     fragments.forEach((f, i) => {
-                        contentHTML += `<div style="margin-top: 8px;"><strong>Фрагмент ${i+1}:</strong> ${f}</div>`;
+                        // Получаем ключевые слова из вопроса (нужно передать их из app.py)
+                        const highlighted = highlightKeywords(f, window.currentKeywords || []);
+                        contentHTML += `<div style="margin-top: 8px;"><strong>Фрагмент ${i+1}:</strong> ${highlighted}</div>`;
                     });
                     contentHTML += `</details>`;
                 }
@@ -321,6 +323,19 @@
             messageDiv.innerHTML = contentHTML;
             chatContainer.appendChild(messageDiv);
             chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // ПОДСВЕТКА КЛЮЧЕВЫХ СЛОВ
+        function highlightKeywords(text, keywords) {
+            if (!keywords || keywords.length === 0) return text;
+
+            let highlighted = text;
+            keywords.forEach(keyword => {
+                if (keyword.length < 3) return;
+                const regex = new RegExp(`(${keyword})`, 'gi');
+                highlighted = highlighted.replace(regex, '<mark style="background: #ffeb3b; padding: 0 2px; border-radius: 3px;">$1</mark>');
+            });
+            return highlighted;
         }
 
         function addThinking() {
@@ -364,9 +379,11 @@
                 if (data.error) {
                     addMessage(`❌ Ошибка: ${data.error}`, false);
                 } else {
-                    addMessage(data.answer, false, data.sources, data.fragments);
+                    addMessage(data.answer, false, data.sources, data.fragments, data.keywords);
                     saveToHistory(question, data.answer);
                 }
+
+                window.currentKeywords = data.keywords || [];
 
             } catch (error) {
                 removeThinking();
