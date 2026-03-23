@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from peft import PeftModel
 import torch
 import os
 import re
@@ -11,8 +12,9 @@ warnings.filterwarnings("ignore")
 
 app = Flask(__name__)
 
-print("🔄 Загружаем дообученную модель...")
+print("🔄 Загружаем базовую модель и адаптер...")
 
+# Настройки 4-bit
 bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
     bnb_4bit_compute_dtype=torch.float16,
@@ -20,19 +22,22 @@ bnb_config = BitsAndBytesConfig(
     bnb_4bit_quant_type="nf4",
 )
 
-model_dir = "./mistral-finetuned-final"
-tokenizer = AutoTokenizer.from_pretrained(model_dir)
+# Загружаем базовую модель Mistral-7B
+base_model_name = "mistralai/Mistral-7B-Instruct-v0.3"
+tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+tokenizer.pad_token = tokenizer.eos_token
 
-# Явно задаём лимиты памяти: GPU до 14 GB, остальное на CPU
-max_memory = {0: "14GiB", "cpu": "30GiB"}
-
-model = AutoModelForCausalLM.from_pretrained(
-    model_dir,
+base_model = AutoModelForCausalLM.from_pretrained(
+    base_model_name,
     quantization_config=bnb_config,
     device_map="auto",
-    max_memory=max_memory,
     torch_dtype=torch.float16,
 )
+
+# Загружаем LoRA-адаптер (дообученные веса)
+model_dir = "./mistral-finetuned-final"
+model = PeftModel.from_pretrained(base_model, model_dir)
+
 print("✅ Модель загружена")
 
 def ask_model(prompt):
@@ -40,7 +45,6 @@ def ask_model(prompt):
     with torch.no_grad():
         outputs = model.generate(**inputs, max_new_tokens=256, temperature=0.1, do_sample=False)
     answer = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    # Убираем промпт из ответа
     if prompt in answer:
         answer = answer[len(prompt):].strip()
     return answer
@@ -84,7 +88,6 @@ def ask():
         if not query:
             return jsonify({'error': 'Пустой запрос'}), 400
 
-        # Приветствия
         greetings = ['привет', 'здравствуй', 'здравствуйте', 'добрый день', 'как дела']
         if any(g in query.lower() for g in greetings) and len(query.split()) <= 4:
             return jsonify({
@@ -98,7 +101,6 @@ def ask():
         if retriever is None:
             return jsonify({'error': 'База не загружена'}), 500
 
-        # Поиск фрагментов
         if selected_file == 'all':
             docs = retriever.invoke(query)
         else:
@@ -113,7 +115,6 @@ def ask():
                 'keywords': []
             })
 
-        # Убираем дубликаты
         unique = []
         seen = set()
         for doc in docs:
@@ -123,12 +124,10 @@ def ask():
                 unique.append(doc)
         docs = unique
 
-        # Контекст
         context = "\n\n".join([doc.page_content for doc in docs])
         if len(context) > 2000:
             context = context[:2000]
 
-        # Формируем промпт для дообученной модели
         prompt = f"""Контекст:
 {context}
 
@@ -138,11 +137,9 @@ def ask():
 
         answer = ask_model(prompt)
 
-        # Источники
         sources = list(set([doc.metadata.get('source_file', 'Неизвестно') for doc in docs]))
         fragments = [doc.page_content[:300] + '...' for doc in docs[:5]]
 
-        # Ключевые слова для подсветки
         stop_words = {'это', 'что', 'как', 'так', 'вот', 'там', 'тут'}
         words = re.findall(r'[А-Яа-яёЁA-Za-z]{4,}', query)
         keywords = [w.lower() for w in words if w.lower() not in stop_words][:5]
