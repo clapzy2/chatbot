@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Data (не коммитим базу и модели — они генерируются локально)
+data/chromadb/
+data/chat_history.json
+models/*.gguf
+
+# Output
+output/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — НИКОГДА не коммить ключи!
+.env
