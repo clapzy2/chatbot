@@ -333,9 +333,6 @@ def build_gui():
 
     with gr.Blocks(title="TextBot") as app:
 
-        # История сохраняется в localStorage браузера каждого пользователя
-        saved_history = gr.BrowserState([])
-
         gr.HTML("""
         <div style="text-align:center;padding:16px 0 8px">
             <h1 style="font-size:2em;font-weight:bold;">📚 TextBot</h1>
@@ -368,19 +365,15 @@ def build_gui():
 
                 refresh_btn.click(on_refresh_files, outputs=file_dropdown)
 
-                # После ответа — сохраняем историю в браузер
                 chat_btn.click(
                     chat_respond, inputs=[chat_in, chatbot, file_dropdown], outputs=chatbot
-                ).then(lambda: "", outputs=chat_in
-                ).then(lambda h: h, inputs=chatbot, outputs=saved_history)
+                ).then(lambda: "", outputs=chat_in)
 
                 chat_in.submit(
                     chat_respond, inputs=[chat_in, chatbot, file_dropdown], outputs=chatbot
-                ).then(lambda: "", outputs=chat_in
-                ).then(lambda h: h, inputs=chatbot, outputs=saved_history)
+                ).then(lambda: "", outputs=chat_in)
 
-                # Очистка — сбрасываем и чат, и сохранённую историю
-                chat_clear.click(lambda: ([], []), outputs=[chatbot, saved_history])
+                chat_clear.click(lambda: [], outputs=chatbot)
 
             with gr.TabItem("📖 Файлы"):
                 gr.Markdown("### Управление базой знаний")
@@ -403,9 +396,6 @@ def build_gui():
                 info_md = gr.Markdown(value=get_model_info)
                 info_refresh = gr.Button("🔄 Обновить")
                 info_refresh.click(get_model_info, outputs=info_md)
-
-        # При загрузке страницы — восстанавливаем историю из браузера
-        app.load(fn=lambda h: h, inputs=saved_history, outputs=chatbot)
 
     return app
 
