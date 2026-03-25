@@ -1,5 +1,5 @@
 """
-ingest.py — отдельный скрипт индексации (твой привычный workflow)
+ingest.py — отдельный скрипт индексации
 Альтернатива кнопке «Индексировать» в GUI.
 Запуск: python ingest.py
 """
@@ -14,7 +14,7 @@ from src.knowledge_base import KnowledgeBase
 def main():
     print("=" * 50)
     print("  TextBot — Индексация документов")
-    print(f"  Режим чанков : {config.CHUNK_MODE}")
+    print(f"  Чанк         : {config.CHUNK_SIZE} символов")
     print(f"  Папка        : {config.DOCS_DIR}")
     print("=" * 50)
     print()
@@ -25,11 +25,6 @@ def main():
     result = kb.index_all_books()
     print(result)
 
-    print()
-    print("💡 Подсказки:")
-    print("   • Философия, длинный анализ → CHUNK_MODE = 'analytical' в config.py")
-    print("   • Рассказы, факты            → CHUNK_MODE = 'precise' в config.py")
-    print("   • После смены режима удали data/chromadb/ и переиндексируй заново")
     print()
     print("✅ Готово! Запусти main.py для работы с ботом.")
 

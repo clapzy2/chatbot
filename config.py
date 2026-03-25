@@ -25,7 +25,7 @@ LLM_MODE = "api"
 
 # ── API (OpenRouter) ─────────────────────────────────────────────────────
 API_URL   = "https://openrouter.ai/api/v1/chat/completions"
-API_KEY   = ""  # ← ВСТАВЬ свой ключ sk-or-...
+API_KEY   = "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"  # ← ВСТАВЬ свой ключ sk-or-...
 API_MODEL = "qwen/qwen3-32b"
 
 # ── Ollama (локальный режим) ─────────────────────────────────────────────
