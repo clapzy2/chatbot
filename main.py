@@ -300,29 +300,56 @@ def chat_respond(message: str, history: list, selected_file: str):
         ]
 
 
-# ── НАСТРОЙКИ ──────────────────────────────────────────────────────────
-def get_model_info():
-    mode = config.LLM_MODE
-    if mode == "api":
-        model_line = f"- **API модель**: `{getattr(config, 'API_MODEL', '?')}`\n- **API ключ**: {'✅ задан' if getattr(config, 'API_KEY', '') else '❌ не задан'}"
-    elif mode == "ollama":
-        model_line = f"- **Модель Ollama**: `{config.OLLAMA_MODEL}`"
-    else:
-        model_line = f"- **GGUF**: `{config.LLM_MODEL_PATH}`"
-    return f"""## Состояние системы
+# ── РЕЖИМ ЭКЗАМЕНА ─────────────────────────────────────────────────────
+def exam_generate(n_questions: int, selected_file: str):
+    """Генерирует вопросы по загруженным текстам"""
+    try:
+        kb  = _get_kb()
+        llm = _get_llm()
+        if kb.stats()["total_chunks"] == 0:
+            return "❌ База пуста. Загрузите файлы и проиндексируйте."
 
-### LLM
-- **Режим**: `{mode}`
-{model_line}
+        file_filter = "all" if selected_file == "Все файлы" else selected_file
 
-### RAG-пайплайн
-- **Эмбеддинги**: `{config.EMBEDDING_MODEL}`
-- **Реранкер**: `{config.RERANKER_MODEL}` ({'✅' if config.USE_RERANKER else '❌'})
-- **HyDE**: {'✅' if config.USE_HYDE else '❌'} ({config.HYDE_VARIANTS} варианта)
-- **Верификация**: {'✅' if config.USE_VERIFICATION else '❌'}
-- **Чанк**: {config.CHUNK_SIZE} символов (overlap {config.CHUNK_OVERLAP})
-- **Top-K**: {config.RETRIEVAL_TOP_K} → {config.RERANK_TOP_K} после rerank
-"""
+        # Берём случайные фрагменты из базы для генерации вопросов
+        context = kb.search("основные идеи темы содержание", file_filter=file_filter)
+        if not context:
+            return "❌ Не удалось найти контекст для генерации вопросов."
+
+        prompt = config.PROMPTS["exam_generate"].format(
+            n=int(n_questions), context=context
+        )
+        questions = llm.call(prompt, temperature=0.3, max_tokens=1500)
+        return questions.strip()
+    except Exception as e:
+        return f"❌ Ошибка: {e}"
+
+
+def exam_check(question: str, student_answer: str, selected_file: str):
+    """Проверяет ответ студента по базе знаний"""
+    if not question.strip():
+        return "⚠️ Введите вопрос"
+    if not student_answer.strip():
+        return "⚠️ Введите ваш ответ"
+    try:
+        kb  = _get_kb()
+        llm = _get_llm()
+
+        file_filter = "all" if selected_file == "Все файлы" else selected_file
+        context = kb.search(question, file_filter=file_filter)
+        if not context:
+            return "❌ Не удалось найти информацию по этому вопросу в базе."
+
+        prompt = config.PROMPTS["exam_check"].format(
+            context=context,
+            question=question,
+            answer=student_answer,
+        )
+        result = llm.call(prompt, temperature=0.1, max_tokens=800)
+        return result.strip()
+    except Exception as e:
+        return f"❌ Ошибка: {e}"
+
 
 
 # ══════════════════════════════════════════════════════════════
@@ -331,7 +358,14 @@ def get_model_info():
 def build_gui():
     chatbot_kwargs = _gradio_chatbot_kwargs()
 
-    with gr.Blocks(title="TextBot") as app:
+    with gr.Blocks(title="TextBot", css="""
+        footer {display: none !important;}
+        .built-with {display: none !important;}
+        .show-api {display: none !important;}
+        .settings-btn {display: none !important;}
+        #footer {display: none !important;}
+        .gradio-container > footer {display: none !important;}
+    """) as app:
 
         gr.HTML("""
         <div style="text-align:center;padding:16px 0 8px">
@@ -392,10 +426,81 @@ def build_gui():
                 book_stats_btn.click(on_stats, None, book_out)
                 book_clr_btn.click(on_clear_kb, None, book_out)
 
-            with gr.TabItem("⚙️ Настройки"):
-                info_md = gr.Markdown(value=get_model_info)
-                info_refresh = gr.Button("🔄 Обновить")
-                info_refresh.click(get_model_info, outputs=info_md)
+            # ── Экзамен ──────────────────────────────────────
+            with gr.TabItem("📝 Экзамен"):
+                gr.Markdown("### Проверка знаний по загруженным текстам")
+
+                with gr.Row():
+                    exam_file = gr.Dropdown(
+                        choices=get_file_choices(), value="Все файлы",
+                        label="📄 По какому файлу", scale=3, interactive=True,
+                    )
+                    exam_n = gr.Slider(
+                        minimum=3, maximum=15, value=5, step=1,
+                        label="Кол-во вопросов", scale=2,
+                    )
+                    exam_gen_btn = gr.Button("🎯 Сгенерировать вопросы", variant="primary", scale=2)
+
+                exam_questions = gr.Textbox(
+                    label="Вопросы", lines=12, interactive=False,
+                    placeholder="Нажмите «Сгенерировать вопросы»..."
+                )
+
+                gr.Markdown("---")
+                gr.Markdown("### Проверка ответа")
+
+                exam_question_input = gr.Textbox(
+                    label="Вопрос (скопируйте из списка выше)",
+                    placeholder="Вставьте вопрос...", lines=2,
+                )
+                exam_answer_input = gr.Textbox(
+                    label="Ваш ответ",
+                    placeholder="Напишите ваш ответ...", lines=4,
+                )
+                exam_check_btn = gr.Button("✅ Проверить ответ", variant="primary")
+                exam_result = gr.Textbox(
+                    label="Результат проверки", lines=10, interactive=False,
+                )
+
+                # Обработчики
+                exam_gen_btn.click(
+                    exam_generate, inputs=[exam_n, exam_file], outputs=exam_questions
+                )
+                exam_check_btn.click(
+                    exam_check,
+                    inputs=[exam_question_input, exam_answer_input, exam_file],
+                    outputs=exam_result
+                )
+
+            with gr.TabItem("ℹ️ О системе"):
+                gr.Markdown("""### TextBot v3.0
+Многопользовательская система для работы с учебными текстами.
+
+**Как пользоваться:**
+1. Перейдите во вкладку «📖 Файлы» и загрузите учебные материалы
+2. Нажмите «Загрузить и индексировать»
+3. Вернитесь в «💬 Чат»
+4. Выберите нужный файл в выпадающем списке «Искать в файле» (или оставьте «Все файлы» для поиска по всем)
+5. Задавайте вопросы — бот ответит с цитатами из текста
+6. Для проверки знаний — вкладка «📝 Экзамен»
+
+**Поддерживаемые форматы:** PDF, TXT, EPUB, DOCX, Markdown, FB2, FB2.ZIP, HTML
+
+**Языки текстов:** русский, английский и другие (100+ языков). Можно загрузить текст на английском и задавать вопросы на русском — бот найдёт нужные фрагменты.
+""")
+                gr.Markdown("### Оформление")
+                theme_btn = gr.Button("🌙 Переключить тему (светлая / тёмная)", size="sm")
+                theme_btn.click(fn=None, js="""
+                    () => {
+                        const url = new URL(window.location);
+                        const html = document.querySelector('html');
+                        const isDark = html.classList.contains('dark') ||
+                                       url.searchParams.get('__theme') === 'dark' ||
+                                       (!url.searchParams.has('__theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                        url.searchParams.set('__theme', isDark ? 'light' : 'dark');
+                        window.location.href = url.href;
+                    }
+                """)
 
     return app
 
