@@ -1,38 +1,35 @@
 """
-TextBot v3.0 — конфигурация
-
-- OpenRouter API (qwen3-32b)
-- BGE-M3 + BGE-Reranker-v2-m3
-- Универсальный чанкинг (1200 символов)
-- Контекстный чанкинг (разделы)
+config.py — здесь хранятся все параметры: пути, модели, размеры чанков, ключи API.
+Меняя этот файл, можно переключать режимы работы без изменения остального кода.
 """
 import os
 
+# Базовая директория (папка, где лежит config.py)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ── Директории ──────────────────────────────────────────────────────────
-DOCS_DIR   = os.path.join(BASE_DIR, "docs")
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")
-DATA_DIR   = os.path.join(BASE_DIR, "data")
-MODELS_DIR = os.path.join(BASE_DIR, "models")
-CHROMA_DIR = os.path.join(DATA_DIR, "chromadb")
+# ----- Папки для файлов -----
+DOCS_DIR   = os.path.join(BASE_DIR, "docs")      # сюда кладём учебные тексты
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")    # для результатов (не используется активно)
+DATA_DIR   = os.path.join(BASE_DIR, "data")      # папка с данными
+MODELS_DIR = os.path.join(BASE_DIR, "models")    # для локальных LLM-моделей (необязательно)
+CHROMA_DIR = os.path.join(DATA_DIR, "chromadb")  # где ChromaDB хранит векторы
 
-# ── LLM — режим работы ──────────────────────────────────────────────────
-# "api"       → OpenRouter / Groq / OpenAI-совместимые (облачно)
-# "ollama"    → любая модель через Ollama HTTP (локально)
-# "llama_cpp" → Qwen3 напрямую через .gguf (локально)
+# LLM — режим работы
+# "api"        OpenRouter / Groq / OpenAI-совместимые (облачно)
+# "ollama"     любая модель через Ollama (локально)
+# "llama_cpp"  Qwen3 напрямую через .gguf (локально)
 LLM_MODE = "api"
 
-# ── API (OpenRouter) ─────────────────────────────────────────────────────
+# Настройки API (OpenRouter)
 API_URL   = "https://openrouter.ai/api/v1/chat/completions"
-API_KEY   = "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"  # ← ВСТАВЬ свой ключ sk-or-...
-API_MODEL = "qwen/qwen3-32b"
+API_KEY   = "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" # ключ
+API_MODEL = "qwen/qwen3-32b" # модель от Qwen через OpenRouter
 
-# ── Ollama (локальный режим) ─────────────────────────────────────────────
+# Ollama (локальный режим)
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen3:8b"
 
-# ── llama-cpp ────────────────────────────────────────────────────────────
+# llama-cpp
 LLM_MODEL_PATH     = os.path.join(MODELS_DIR, "model.gguf")
 LLM_CONTEXT_SIZE   = 32768
 LLM_MAX_TOKENS     = 2048
@@ -44,47 +41,46 @@ LLM_N_BATCH        = 512
 LLM_N_THREADS      = None
 QWEN3_THINKING_MODE = False
 
-# ── Эмбеддинги ──────────────────────────────────────────────────────────
-EMBEDDING_MODEL  = "BAAI/bge-m3"
+# Настройки эмбеддингов (преобразование текста в вектор)
+EMBEDDING_MODEL  = "BAAI/bge-m3"    # лучшая модель для поиска по смыслу
 EMBEDDING_DEVICE = "cpu"
 
-# ── Cross-Encoder Reranker ───────────────────────────────────────────────
+# Cross-Encoder Reranker (Реранкер (уточняет поиск))
 RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
-USE_RERANKER   = True
-RERANK_TOP_K   = 7
+USE_RERANKER   = True   # включаем уточнение
+RERANK_TOP_K   = 7  # оставляем 7 лучших фрагментов
 
-# ── ChromaDB ────────────────────────────────────────────────────────────
-COLLECTION_NAME = "textbot_docs"
+# ChromaDB (векторная база)
+COLLECTION_NAME = "textbot_docs"    # имя коллекции в базе
 
-# ── Чанкинг ─────────────────────────────────────────────────────────────
-# Универсальный размер: 1200 символов — хороший баланс для любых текстов
-# (и рассказы, и философия, и учебники)
-CHUNK_SIZE    = 1200
-CHUNK_OVERLAP = 200
+# Разбивка текста на куски (чанки)
+# Универсальный размер: 1200 символов — хороший баланс для любых текстов (и рассказы, и философия, и учебники и тд.
+CHUNK_SIZE    = 1200    # размер одного фрагмента в символах
+CHUNK_OVERLAP = 200     # перекрытие между соседними чанками
 
-# ── Поиск ───────────────────────────────────────────────────────────────
-RETRIEVAL_TOP_K = 20
-MIN_RELEVANCE   = 0.10
-MAX_CTX_CHARS   = 8000
+# Поиск
+RETRIEVAL_TOP_K = 20    # сначала находим 20 кандидатов
+MIN_RELEVANCE   = 0.10  # минимальное сходство (от 0 до 1)
+MAX_CTX_CHARS   = 8000  # максимум символов, отправляемых в LLM
 
-# ── HyDE ────────────────────────────────────────────────────────────────
-USE_HYDE      = True
-HYDE_VARIANTS = 3
+# HyDE (переформулировка вопроса)
+USE_HYDE      = True    # улучшает полноту поиска
+HYDE_VARIANTS = 3       # генерируем 3 варианта вопроса
 
-# ── Верификация ─────────────────────────────────────────────────────────
+# Верификация (проверка ответов)
 USE_VERIFICATION = True
 
-# ── Форматы файлов ───────────────────────────────────────────────────────
+# Какие форматы файлов поддерживаются
 SUPPORTED_FORMATS = [
     ".pdf", ".txt", ".epub", ".docx",
     ".md", ".fb2", ".fb2.zip", ".html", ".htm",
 ]
 
-# ── GUI ─────────────────────────────────────────────────────────────────
-GUI_PORT  = 7860
-GUI_SHARE = True   # публичная ссылка для одногруппников
+# Настройки веб-интерфейса Gradio
+GUI_PORT  = 7860    # порт для локального сервера
+GUI_SHARE = True    # публичная ссылка
 
-# ── Системный промпт ────────────────────────────────────────────────────
+# Системный промпт (для LLM)
 SYSTEM_PROMPT = """Ты — точный ассистент для работы с текстами и учебными материалами.
 
 Принципы:
@@ -95,7 +91,7 @@ SYSTEM_PROMPT = """Ты — точный ассистент для работы 
 5. ЯЗЫК — грамотный русский, академический стиль
 6. ПОДСЧЁТ — если нужно посчитать что-то, перечисли каждый случай из контекста по отдельности"""
 
-# ── Промпты ─────────────────────────────────────────────────────────────
+# Шаблоны промптов для разных задач
 PROMPTS = {
 
     "qa": """{system}

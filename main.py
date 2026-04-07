@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """
-TextBot v3.0 — Gradio GUI
-
-- Отдельная история для каждого пользователя (gr.State)
-- OpenRouter API
-- Контекстный чанкинг + фильтр по разделам
-- Коррекции и follow-ups
+main.py — запускает веб-интерфейс Gradio.
+Пользователь может загружать файлы, задавать вопросы, проходить экзамен.
 """
 import sys
 import os
@@ -13,6 +9,7 @@ import gc
 import json
 import threading
 
+# Отключаем прокси для API
 os.environ["NO_PROXY"] = "localhost,127.0.0.1,api.groq.com,openrouter.ai"
 os.environ["no_proxy"] = "localhost,127.0.0.1,api.groq.com,openrouter.ai"
 
@@ -23,7 +20,7 @@ import config
 from src.llm_engine import LLMEngine
 from src.knowledge_base import KnowledgeBase
 
-# ── Глобальные объекты ─────────────────────────────────────────────────
+# Глобальные объекты
 _llm: LLMEngine     = None
 _kb:  KnowledgeBase = None
 
@@ -66,8 +63,10 @@ def _get_kb(log=None) -> KnowledgeBase:
         _kb.set_llm(_get_llm())
     return _kb
 
+# Вспомогательные функции для обработки сообщений
 
 def _is_refusal(text: str) -> bool:
+    """Проверяет, не сказала ли LLM "нет информации". (в разработке)"""
     lower = text.lower().strip()
     if not lower:
         return True
@@ -77,18 +76,20 @@ def _is_refusal(text: str) -> bool:
 
 
 def _is_correction(text: str) -> bool:
+    """Определяет, пытается ли пользователь исправить предыдущий ответ. (в разработке)"""
     return any(c in text.lower().strip() for c in _CORRECTIONS)
 
 
 def _is_followup(text: str) -> bool:
+    """Короткие уточняющие вопросы (точно?, подробнее?) (в разработке)"""
     return len(text.split()) <= 7 and any(f in text.lower().strip() for f in _FOLLOWUPS)
 
-
+""" В разработке """
 def _gradio_chatbot_kwargs() -> dict:
     major = gr.__version__.split(".")[0]
     return {"type": "messages"} if major == "5" else {}
 
-
+""" В разработке """
 def _extract_content(msg) -> str:
     content = msg.get("content", "") if isinstance(msg, dict) else str(msg)
     if isinstance(content, list):
@@ -98,7 +99,7 @@ def _extract_content(msg) -> str:
         )
     return str(content).split("\n\n*[")[0].strip()
 
-
+""" В разработке """
 def _history_to_context(history: list, n_last: int = 4) -> str:
     if not history or len(history) < 2:
         return ""
@@ -113,6 +114,7 @@ def _history_to_context(history: list, n_last: int = 4) -> str:
 
 
 def _get_last_qa(history: list):
+    """Извлекает последний вопрос и ответ из истории диалога. (В разработке)"""
     last_answer, last_question = "", ""
     for msg in reversed(history):
         role = msg.get("role", "")
@@ -135,9 +137,7 @@ def _verify(question: str, answer: str, context: str) -> bool:
     return "нет информации" not in verdict.lower() and "не подтверждено" not in verdict.lower()
 
 
-# ══════════════════════════════════════════════════════════════
 #  ОБРАБОТЧИКИ
-# ══════════════════════════════════════════════════════════════
 
 def on_index_books():
     import re as _re
@@ -146,6 +146,7 @@ def on_index_books():
         log_lines.append(_re.sub(r'\[.*?\]', '', str(msg)))
         return log_lines[-1]
     try:
+        """Переиндексировать все файлы из папки docs/."""
         kb = _get_kb(log)
         result = kb.index_all_books()
         stats = kb.stats()
@@ -160,7 +161,9 @@ def on_index_books():
         return f"❌ Ошибка: {e}"
 
 
+# Функции для вкладки "Файлы"
 def on_add_book(files):
+    """Загрузить новые файлы и проиндексировать."""
     if not files:
         return "Выберите файлы для загрузки"
     import shutil
@@ -181,6 +184,7 @@ def on_add_book(files):
 
 
 def on_clear_kb():
+    """Очистить базу."""
     try:
         result = _get_kb().clear()
         gc.collect()
@@ -190,6 +194,7 @@ def on_clear_kb():
 
 
 def on_stats():
+    """Показать статистику базы."""
     try:
         stats = _get_kb().stats()
         text = f"📚 Файлов: {stats['total_books']}\n📄 Фрагментов: {stats['total_chunks']}\n"
@@ -205,6 +210,7 @@ def on_stats():
 
 
 def get_file_choices():
+    """Список файлов для выпадающего списка."""
     try:
         return ["Все файлы"] + _get_kb().get_available_files()
     except Exception:
@@ -215,16 +221,17 @@ def on_refresh_files():
     return gr.Dropdown(choices=get_file_choices(), value="Все файлы")
 
 
-# ── ЧАТ (с отдельной историей для каждого пользователя) ────────────────
+# ── Основной обработчик чата ────────────────
 def chat_respond(message: str, history: list, selected_file: str):
     """
-    history — это gr.Chatbot value, уникальный для каждой сессии браузера.
-    Каждый пользователь видит только свою историю.
+    Генератор, который выдаёт ответ по токену (потоково).
+    history — это список сообщений для текущего пользователя.
     """
     if not message.strip():
         yield history
         return
 
+    # Приветствие
     greetings = ["привет", "здравствуй", "добрый", "hi", "hello"]
     if any(g in message.lower() for g in greetings) and len(message.split()) <= 5:
         yield history + [
@@ -238,7 +245,8 @@ def chat_respond(message: str, history: list, selected_file: str):
         llm = _get_llm()
         file_filter = "all" if selected_file == "Все файлы" else selected_file
 
-        is_corr = _is_correction(message)
+        # Проверяем, является ли сообщение исправлением или уточнением
+        is_corr = _is_correction(message)# ищем по предыдущему вопросу
         is_fu   = _is_followup(message)
         search_query = message
         prev_question, prev_answer = "", ""
@@ -246,11 +254,13 @@ def chat_respond(message: str, history: list, selected_file: str):
         if is_corr or is_fu:
             prev_question, prev_answer = _get_last_qa(history)
             if prev_question:
-                search_query = prev_question
+                search_query = prev_question    # ищем по предыдущему вопросу
 
+        # Определяем, о каком разделе идёт речь (чтобы отфильтровать)
         section_filter = kb.find_section_in_query(message)
-        context = kb.search(search_query, file_filter=file_filter, section_filter=section_filter)
 
+        # Ищем релевантные фрагменты
+        context = kb.search(search_query, file_filter=file_filter, section_filter=section_filter)
         if not context:
             yield history + [
                 {"role": "user", "content": message},
@@ -258,6 +268,7 @@ def chat_respond(message: str, history: list, selected_file: str):
             ]
             return
 
+        # Выбираем нужный промпт
         if is_corr and prev_question and prev_answer:
             full_prompt = config.PROMPTS["correction"].format(
                 system=config.SYSTEM_PROMPT, context=context,
@@ -275,6 +286,7 @@ def chat_respond(message: str, history: list, selected_file: str):
                     system=config.SYSTEM_PROMPT, topic=message, context=context
                 )
 
+        # Генерируем ответ потоково
         answer = ""
         new_history = history + [
             {"role": "user", "content": message},
@@ -300,9 +312,9 @@ def chat_respond(message: str, history: list, selected_file: str):
         ]
 
 
-# ── РЕЖИМ ЭКЗАМЕНА ─────────────────────────────────────────────────────
+# Режим Эказмена
 def exam_generate(n_questions: int, selected_file: str):
-    """Генерирует вопросы по загруженным текстам"""
+    """Сгенерировать вопросы по тексту."""
     try:
         kb  = _get_kb()
         llm = _get_llm()
@@ -310,8 +322,7 @@ def exam_generate(n_questions: int, selected_file: str):
             return "❌ База пуста. Загрузите файлы и проиндексируйте."
 
         file_filter = "all" if selected_file == "Все файлы" else selected_file
-
-        # Берём случайные фрагменты из базы для генерации вопросов
+        # Ищем общий контекст (по ключевым словам)
         context = kb.search("основные идеи темы содержание", file_filter=file_filter)
         if not context:
             return "❌ Не удалось найти контекст для генерации вопросов."
@@ -352,9 +363,8 @@ def exam_check(question: str, student_answer: str, selected_file: str):
 
 
 
-# ══════════════════════════════════════════════════════════════
-#  GUI
-# ══════════════════════════════════════════════════════════════
+#  Построение GUI
+
 def build_gui():
     chatbot_kwargs = _gradio_chatbot_kwargs()
 
@@ -369,14 +379,14 @@ def build_gui():
 
         gr.HTML("""
         <div style="text-align:center;padding:16px 0 8px">
-            <h1 style="font-size:2em;font-weight:bold;">📚 TextBot</h1>
+            <h1 style="font-size:2em;font-weight:bold;">Бонч База Знаний</h1>
             <p style="color:#888;font-size:1em;">
                 Умный ассистент по учебным текстам
             </p>
         </div>""")
 
         with gr.Tabs():
-
+            # Вкладка Чат
             with gr.TabItem("💬 Чат"):
                 gr.Markdown("### Вопросы по загруженным текстам")
 
@@ -409,6 +419,7 @@ def build_gui():
 
                 chat_clear.click(lambda: [], outputs=chatbot)
 
+            # Вкладка Файлы
             with gr.TabItem("📖 Файлы"):
                 gr.Markdown("### Управление базой знаний")
                 with gr.Row():
@@ -426,7 +437,7 @@ def build_gui():
                 book_stats_btn.click(on_stats, None, book_out)
                 book_clr_btn.click(on_clear_kb, None, book_out)
 
-            # ── Экзамен ──────────────────────────────────────
+            # Вкладка Экзамен
             with gr.TabItem("📝 Экзамен"):
                 gr.Markdown("### Проверка знаний по загруженным текстам")
 
@@ -473,7 +484,7 @@ def build_gui():
                 )
 
             with gr.TabItem("ℹ️ О системе"):
-                gr.Markdown("""### TextBot v3.0
+                gr.Markdown("""### Бонч База Знаний
 Многопользовательская система для работы с учебными текстами.
 
 **Как пользоваться:**
@@ -486,7 +497,7 @@ def build_gui():
 
 **Поддерживаемые форматы:** PDF, TXT, EPUB, DOCX, Markdown, FB2, FB2.ZIP, HTML
 
-**Языки текстов:** русский, английский и другие (100+ языков). Можно загрузить текст на английском и задавать вопросы на русском — бот найдёт нужные фрагменты.
+**Языки текстов:** русский, английский и другие. Можно загрузить текст на английском и задавать вопросы на русском — бот найдёт нужные фрагменты.
 """)
                 gr.Markdown("### Оформление")
                 theme_btn = gr.Button("🌙 Переключить тему (светлая / тёмная)", size="sm")
@@ -505,9 +516,8 @@ def build_gui():
     return app
 
 
-# ══════════════════════════════════════════════════════════════
-#  ENTRY POINT
-# ══════════════════════════════════════════════════════════════
+#  Запуск
+
 if __name__ == "__main__":
     for d in [config.DOCS_DIR, config.OUTPUT_DIR, config.MODELS_DIR, config.DATA_DIR]:
         os.makedirs(d, exist_ok=True)
@@ -521,7 +531,7 @@ if __name__ == "__main__":
         llm_label = f"LLAMA_CPP / {os.path.basename(config.LLM_MODEL_PATH)}"
 
     print("=" * 55)
-    print("  📚 TextBot v3.0")
+    print("  📚 Бонч База Знаний v3.0")
     print(f"  LLM        : {llm_label}")
     print(f"  Эмбеддинги : {config.EMBEDDING_MODEL}")
     print(f"  Реранкер   : {config.RERANKER_MODEL}")

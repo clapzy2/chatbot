@@ -1,10 +1,11 @@
 """
-ingest.py — отдельный скрипт индексации
-Альтернатива кнопке «Индексировать» в GUI.
-Запуск: python ingest.py
+ingest.py — запускается один раз, чтобы прочитать все файлы из docs/
+и добавить их в базу знаний (ChromaDB).
 """
 import os
 import sys
+
+# Добавляем корневую папку в пути, чтобы можно было импортировать config и src
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
@@ -19,9 +20,13 @@ def main():
     print("=" * 50)
     print()
 
+    # Создаём папку docs/, если её нет
     os.makedirs(config.DOCS_DIR, exist_ok=True)
 
+    # Создаём объект базы знаний (при этом загружаются эмбеддинги и открывается ChromaDB)
     kb     = KnowledgeBase()
+
+    # Запускаем индексацию всех книг (файлов) из папки docs/
     result = kb.index_all_books()
     print(result)
 

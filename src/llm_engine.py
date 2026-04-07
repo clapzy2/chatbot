@@ -1,22 +1,14 @@
 """
-LLM Engine v3.0 — три режима:
-  ollama    → любая модель через Ollama HTTP API (локально)
-  llama_cpp → Qwen3 через .gguf файл (локально)
-  api       → Groq / OpenAI-совместимые API (облачно, параллельные запросы)
-
-Переключается через config.LLM_MODE
+llm_engine.py — универсальный интерфейс к LLM через API (OpenRouter).
 """
 import os
 import sys
 import json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import config
 
 
-# ══════════════════════════════════════════════════════════════
 #  OLLAMA (локально)
-# ══════════════════════════════════════════════════════════════
 class _OllamaBackend:
 
     def __init__(self):
@@ -62,9 +54,7 @@ class _OllamaBackend:
             return False
 
 
-# ══════════════════════════════════════════════════════════════
 #  LLAMA-CPP (локально)
-# ══════════════════════════════════════════════════════════════
 class _LlamaCppBackend:
 
     def __init__(self):
@@ -121,9 +111,7 @@ class _LlamaCppBackend:
         return os.path.exists(config.LLM_MODEL_PATH)
 
 
-# ══════════════════════════════════════════════════════════════
 #  API (Groq / OpenAI-совместимые)
-# ══════════════════════════════════════════════════════════════
 class _ApiBackend:
     """
     Работает с любым OpenAI-совместимым API:
@@ -140,7 +128,7 @@ class _ApiBackend:
         self._api_key = getattr(config, "API_KEY", "")
         self._api_model = getattr(config, "API_MODEL", "qwen/qwen3-32b")
 
-        # Обходим прокси для API
+        # Отключаем прокси для API (чтобы не было проблем)
         os.environ["NO_PROXY"] = os.environ.get("NO_PROXY", "") + ",api.groq.com,openrouter.ai"
         os.environ["no_proxy"] = os.environ.get("no_proxy", "") + ",api.groq.com,openrouter.ai"
 
@@ -174,7 +162,7 @@ class _ApiBackend:
                 {"role": "user", "content": prompt},
             ]
 
-        # Qwen3: отключаем thinking mode (иначе content=null, 50 сек задержка)
+        # Qwen3: отключаем thinking mode (иначе долгая задержка)
         if "qwen3" in self._api_model.lower():
             messages[-1]["content"] = "/no_think\n" + messages[-1]["content"]
 
@@ -187,6 +175,7 @@ class _ApiBackend:
         }
 
         if stream:
+            # Потоковый режим: читаем ответ по кусочкам
             r = self._requests.post(
                 self._api_url, headers=headers, json=payload,
                 stream=True, timeout=120
@@ -211,6 +200,7 @@ class _ApiBackend:
                     except (json.JSONDecodeError, KeyError, IndexError):
                         continue
         else:
+            # Непотоковый режим
             r = self._requests.post(
                 self._api_url, headers=headers, json=payload, timeout=120
             )
@@ -239,13 +229,10 @@ class _ApiBackend:
             return False
 
 
-# ══════════════════════════════════════════════════════════════
-#  ЕДИНЫЙ ИНТЕРФЕЙС
-# ══════════════════════════════════════════════════════════════
+#  Единый интерфейс
 class LLMEngine:
     """
     Единый интерфейс для всех движков.
-    config.LLM_MODE = "ollama" | "llama_cpp" | "api"
     """
 
     def __init__(self):
@@ -267,6 +254,7 @@ class LLMEngine:
 
     def call(self, prompt: str, temperature: float = None,
              max_tokens: int = None) -> str:
+        """Синхронный вызов, возвращает полный ответ."""
         temp   = temperature if temperature is not None else config.LLM_TEMPERATURE
         tokens = max_tokens  if max_tokens  is not None else config.LLM_MAX_TOKENS
         result = ""
@@ -276,6 +264,7 @@ class LLMEngine:
 
     def stream(self, prompt: str, temperature: float = None,
                max_tokens: int = None):
+        """Потоковый вызов, возвращает генератор токенов."""
         temp   = temperature if temperature is not None else config.LLM_TEMPERATURE
         tokens = max_tokens  if max_tokens  is not None else config.LLM_MAX_TOKENS
         yield from self._backend.generate(prompt, temp, tokens, stream=True)

@@ -6,7 +6,6 @@ __pycache__/
 venv/
 env/
 
-# Data (не коммитим базу и модели — они генерируются локально)
 data/chromadb/
 data/chat_history.json
 models/*.gguf
@@ -24,5 +23,5 @@ output/
 .DS_Store
 Thumbs.db
 
-# Secrets — НИКОГДА не коммить ключи!
+# Secrets
 .env
