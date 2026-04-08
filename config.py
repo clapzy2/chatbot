@@ -1,86 +1,78 @@
 """
-config.py — здесь хранятся все параметры: пути, модели, размеры чанков, ключи API.
-Меняя этот файл, можно переключать режимы работы без изменения остального кода.
+config.py — все настройки системы в одном месте.
+Меняя этот файл, можно переключать режимы работы без изменения кода.
 """
 import os
 
-# Базовая директория (папка, где лежит config.py)
+# Папка, где лежит этот файл
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ----- Папки для файлов -----
-DOCS_DIR   = os.path.join(BASE_DIR, "docs")      # сюда кладём учебные тексты
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")    # для результатов (не используется активно)
-DATA_DIR   = os.path.join(BASE_DIR, "data")      # папка с данными
-MODELS_DIR = os.path.join(BASE_DIR, "models")    # для локальных LLM-моделей (необязательно)
-CHROMA_DIR = os.path.join(DATA_DIR, "chromadb")  # где ChromaDB хранит векторы
+# Папки проекта
+DOCS_DIR   = os.path.join(BASE_DIR, "docs")      # учебные тексты
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")     # результаты
+DATA_DIR   = os.path.join(BASE_DIR, "data")       # данные
+MODELS_DIR = os.path.join(BASE_DIR, "models")     # локальные модели
+CHROMA_DIR = os.path.join(DATA_DIR, "chromadb")   # векторная база данных
 
-# LLM — режим работы
-# "api"        OpenRouter / Groq / OpenAI-совместимые (облачно)
-# "ollama"     любая модель через Ollama (локально)
-# "llama_cpp"  Qwen3 напрямую через .gguf (локально)
+
+# Режим работы LLM: "api" (облако) или "ollama" (локально)
 LLM_MODE = "api"
 
-# Настройки API (OpenRouter)
+# Настройки API (OpenRouter — облачный режим)
 API_URL   = "https://openrouter.ai/api/v1/chat/completions"
-API_KEY   = "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" # ключ
-API_MODEL = "qwen/qwen3-32b" # модель от Qwen через OpenRouter
+API_KEY   = "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"  # получить на openrouter.ai
+API_MODEL = "qwen/qwen3-32b"
 
-# Ollama (локальный режим)
+# Настройки Ollama (локальный режим, без интернета)
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen3:8b"
 
-# llama-cpp
-LLM_MODEL_PATH     = os.path.join(MODELS_DIR, "model.gguf")
-LLM_CONTEXT_SIZE   = 32768
-LLM_MAX_TOKENS     = 2048
-LLM_TEMPERATURE    = 0.1
-LLM_TOP_P          = 0.9
-LLM_REPEAT_PENALTY = 1.15
-LLM_GPU_LAYERS     = -1
-LLM_N_BATCH        = 512
-LLM_N_THREADS      = None
-QWEN3_THINKING_MODE = False
+# Параметры генерации текста
+LLM_MAX_TOKENS     = 2048    # максимальная длина ответа
+LLM_TEMPERATURE    = 0.1     # "креативность" (0 = точно, 1 = свободно)
+LLM_TOP_P          = 0.9     # отсечение маловероятных токенов
+LLM_REPEAT_PENALTY = 1.15    # штраф за повторения
+LLM_CONTEXT_SIZE   = 32768   # размер контекстного окна
 
-# Настройки эмбеддингов (преобразование текста в вектор)
-EMBEDDING_MODEL  = "BAAI/bge-m3"    # лучшая модель для поиска по смыслу
-EMBEDDING_DEVICE = "cpu"
+# Модель эмбеддингов (превращает текст в вектор)
+EMBEDDING_MODEL  = "BAAI/bge-m3"    # мультиязычная, 1024 измерения
+EMBEDDING_DEVICE = "cpu"             # "cuda" если есть GPU
 
-# Cross-Encoder Reranker (Реранкер (уточняет поиск))
+# Реранкер (уточняет результаты поиска)
 RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
-USE_RERANKER   = True   # включаем уточнение
-RERANK_TOP_K   = 7  # оставляем 7 лучших фрагментов
+USE_RERANKER   = True    # включить реранкинг
+RERANK_TOP_K   = 7       # оставить 7 лучших фрагментов
 
-# ChromaDB (векторная база)
-COLLECTION_NAME = "textbot_docs"    # имя коллекции в базе
+# ChromaDB (векторная база данных)
+COLLECTION_NAME = "textbot_docs"
 
-# Разбивка текста на куски (чанки)
-# Универсальный размер: 1200 символов — хороший баланс для любых текстов (и рассказы, и философия, и учебники и тд.
-CHUNK_SIZE    = 1200    # размер одного фрагмента в символах
-CHUNK_OVERLAP = 200     # перекрытие между соседними чанками
+# Чанкинг (разбивка текста на фрагменты)
+CHUNK_SIZE    = 1200    # размер фрагмента в символах
+CHUNK_OVERLAP = 200     # перекрытие между соседними фрагментами
 
 # Поиск
-RETRIEVAL_TOP_K = 20    # сначала находим 20 кандидатов
-MIN_RELEVANCE   = 0.10  # минимальное сходство (от 0 до 1)
-MAX_CTX_CHARS   = 8000  # максимум символов, отправляемых в LLM
+RETRIEVAL_TOP_K = 20     # сначала находим 20 кандидатов
+MIN_RELEVANCE   = 0.10   # минимальное сходство (от 0 до 1)
+MAX_CTX_CHARS   = 8000   # максимум символов для отправки в LLM
 
-# HyDE (переформулировка вопроса)
-USE_HYDE      = True    # улучшает полноту поиска
-HYDE_VARIANTS = 3       # генерируем 3 варианта вопроса
+# HyDE (переформулировка вопроса для лучшего поиска)
+USE_HYDE      = True     # включить
+HYDE_VARIANTS = 3        # генерировать 3 варианта вопроса
 
 # Верификация (проверка ответов)
 USE_VERIFICATION = True
 
-# Какие форматы файлов поддерживаются
+# Поддерживаемые форматы файлов
 SUPPORTED_FORMATS = [
     ".pdf", ".txt", ".epub", ".docx",
     ".md", ".fb2", ".fb2.zip", ".html", ".htm",
 ]
 
-# Настройки веб-интерфейса Gradio
-GUI_PORT  = 7860    # порт для локального сервера
-GUI_SHARE = True    # публичная ссылка
+# Веб-интерфейс
+GUI_PORT  = 7860     # порт сервера
+GUI_SHARE = True     # создать публичную ссылку
 
-# Системный промпт (для LLM)
+# Системный промпт (инструкция для LLM)
 SYSTEM_PROMPT = """Ты — точный ассистент для работы с текстами и учебными материалами.
 
 Принципы:
@@ -93,7 +85,7 @@ SYSTEM_PROMPT = """Ты — точный ассистент для работы 
 
 # Шаблоны промптов для разных задач
 PROMPTS = {
-
+    # Основной вопрос-ответ
     "qa": """{system}
 
 КОНТЕКСТ:
@@ -111,6 +103,7 @@ PROMPTS = {
 
 ОТВЕТ:""",
 
+    # Верификация ответа
     "verify": """Проверь: подтверждается ли ОТВЕТ информацией из КОНТЕКСТА?
 
 КОНТЕКСТ:
@@ -127,6 +120,7 @@ PROMPTS = {
 Если ответ точный и подтверждается контекстом — напиши только: ПОДТВЕРЖДЕНО
 Если в ответе есть ошибка или выдумка — напиши только: НЕТ ИНФОРМАЦИИ""",
 
+    # Исправление ответа после замечания пользователя
     "correction": """{system}
 
 КОНТЕКСТ:
@@ -143,6 +137,7 @@ PROMPTS = {
 
 ИСПРАВЛЕННЫЙ ОТВЕТ:""",
 
+    # HyDE: переформулировка вопроса
     "hyde": """Перефразируй вопрос {n} разными способами для поиска в тексте.
 Каждый вариант — отдельная строка. Без нумерации, без пояснений.
 
@@ -150,6 +145,7 @@ PROMPTS = {
 
 Варианты:""",
 
+    # Генерация вопросов для экзамена
     "exam_generate": """На основе приведённого текста составь {n} вопросов для проверки знаний студента.
 
 ТЕКСТ:
@@ -165,6 +161,7 @@ PROMPTS = {
 
 ВОПРОСЫ:""",
 
+    # Проверка ответа студента
     "exam_check": """Ты — строгий, но справедливый экзаменатор.
 
 ТЕКСТ УЧЕБНИКА:

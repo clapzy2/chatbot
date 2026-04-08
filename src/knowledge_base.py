@@ -1,5 +1,6 @@
 """
 knowledge_base.py — загрузка файлов, разбивка на разделы, индексация, поиск.
+Основной модуль RAG-пайплайна.
 """
 import os
 import re
@@ -15,10 +16,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 
 
-#  Загрузчики файлов
+# Функции загрузки файлов разных форматов
 
-def _load_txt(path: str) -> str:
-    """Прочитать обычный текстовый файл (пробуем разные кодировки)."""
+def _load_txt(path):
+    """Прочитать текстовый файл (пробуем разные кодировки)."""
     for enc in ["utf-8", "cp1251", "latin-1", "cp866"]:
         try:
             with open(path, "r", encoding=enc) as f:
@@ -27,25 +28,24 @@ def _load_txt(path: str) -> str:
             continue
     raise ValueError(f"Не удалось прочитать: {path}")
 
-
-def _load_pdf(path: str) -> str:
+def _load_pdf(path):
+    """Извлечь текст из PDF."""
     from PyPDF2 import PdfReader
     reader = PdfReader(path)
-    # Извлекаем текст со всех страниц
     return "\n\n".join(p.extract_text() for p in reader.pages if p.extract_text())
 
-
-def _load_docx(path: str) -> str:
+def _load_docx(path):
+    """Извлечь текст из Word-документа."""
     from docx import Document
     doc = Document(path)
     return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
-
-def _load_epub(path: str) -> str:
+def _load_epub(path):
+    """Извлечь текст из EPUB."""
     import ebooklib
     from ebooklib import epub
     from bs4 import BeautifulSoup
-    book  = epub.read_epub(path)
+    book = epub.read_epub(path)
     parts = []
     for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
         soup = BeautifulSoup(item.get_content(), "html.parser")
@@ -54,43 +54,39 @@ def _load_epub(path: str) -> str:
             parts.append(text.strip())
     return "\n\n".join(parts)
 
-
-def _load_fb2(path: str) -> str:
+def _load_fb2(path):
+    """Извлечь текст из FB2."""
     from bs4 import BeautifulSoup
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         soup = BeautifulSoup(f.read(), "lxml-xml")
     body = soup.find("body")
     return body.get_text(separator="\n") if body else soup.get_text(separator="\n")
 
-
-def _load_fb2zip(path: str) -> str:
-    """Распаковываем zip, находим внутри .fb2 и читаем."""
+def _load_fb2zip(path):
+    """Распаковать ZIP и извлечь текст из FB2 внутри."""
     with zipfile.ZipFile(path, "r") as zf:
         fb2_files = [n for n in zf.namelist() if n.lower().endswith(".fb2")]
         if not fb2_files:
             raise ValueError(f"Нет .fb2 внутри архива: {path}")
         with tempfile.TemporaryDirectory() as tmpdir:
             zf.extract(fb2_files[0], tmpdir)
-            extracted = os.path.join(tmpdir, fb2_files[0])
-            return _load_fb2(extracted)
+            return _load_fb2(os.path.join(tmpdir, fb2_files[0]))
 
-
-def _load_html(path: str) -> str:
+def _load_html(path):
+    """Извлечь текст из HTML."""
     from bs4 import BeautifulSoup
     text = _load_txt(path)
     return BeautifulSoup(text, "html.parser").get_text(separator="\n")
 
-
-# Словарь: расширение и функция загрузки
+# Словарь: расширение файла → функция загрузки
 _LOADERS = {
     ".pdf": _load_pdf, ".txt": _load_txt, ".md": _load_txt,
     ".docx": _load_docx, ".epub": _load_epub, ".fb2": _load_fb2,
     ".fb2.zip": _load_fb2zip, ".html": _load_html, ".htm": _load_html,
 }
 
-
-def load_file(path: str) -> str:
-    """Выбрать нужную функцию по расширению и вернуть текст."""
+def load_file(path):
+    """Определить формат файла и извлечь текст."""
     lower = path.lower()
     if lower.endswith(".fb2.zip"):
         return _load_fb2zip(path)
@@ -101,16 +97,16 @@ def load_file(path: str) -> str:
     return loader(path)
 
 
-#  Определение разделов в тексте
+# Определение разделов в тексте
 
-def _detect_sections(text: str) -> List[Tuple[str, str]]:
+def _detect_sections(text):
     """
-    Разбивает текст на секции по заголовкам.
-    Заголовок = строка с отступом 2+, начинается с заглавной, окружена пустыми строками, < 120 символов.
+    Разбивает текст на разделы по заголовкам.
+    Заголовок определяется по паттернам: отступ, заглавные буквы,
+    окружение пустыми строками, длина < 120 символов.
     Возвращает список пар: (название_раздела, текст_раздела)
     """
     lines = text.split("\n")
-    # Регулярки для поиска заголовков
     header_patterns = [
         r'^\s{2,}[А-ЯЁA-Z][А-Яа-яёЁA-Za-z\s:–—\-,.]+\s*$',
         r'^\s*(Глава|Часть|Раздел|Chapter|Part|Section)\s+[\dIVXLCDMivxlcdm]+.*$',
@@ -125,17 +121,19 @@ def _detect_sections(text: str) -> List[Tuple[str, str]]:
         if not stripped:
             current_lines.append(line)
             continue
+
+        # Проверяем, является ли строка заголовком
         is_header = False
         for pattern in header_patterns:
             if re.match(pattern, line) and len(stripped) < 120:
-                # Проверяем, что строка окружена пустыми строками
                 prev_empty = (i == 0) or (i > 0 and not lines[i-1].strip())
                 next_empty = (i == len(lines)-1) or (i < len(lines)-1 and not lines[i+1].strip())
                 if prev_empty and next_empty:
                     is_header = True
                     break
+
         if is_header:
-            # Сохраняем предыдущую секцию
+            # Сохраняем предыдущую секцию и начинаем новую
             if current_lines:
                 body = "\n".join(current_lines).strip()
                 if body:
@@ -145,29 +143,30 @@ def _detect_sections(text: str) -> List[Tuple[str, str]]:
         else:
             current_lines.append(line)
 
-    # Последняя секция
+    # Сохраняем последнюю секцию
     if current_lines:
         body = "\n".join(current_lines).strip()
         if body:
             sections.append((current_header, body))
 
-    # Если не нашли ни одного заголовка, возвращаем весь текст как одну секцию
+    # Если заголовков не нашли — весь текст как одна секция
     if len(sections) <= 1:
         return [("", text)]
     return sections
 
-#  База Знаний (Основной Класс KnowledgeBase)
+
+# Основной класс — База Знаний
 
 class KnowledgeBase:
     """Управляет загрузкой, индексацией и поиском по текстам."""
 
     def __init__(self, progress_callback=None, llm_engine=None):
-        self._log       = progress_callback or print    # функция для вывода сообщений
-        self._reranker   = None     # реранкер (загружается лениво)
+        self._log = progress_callback or print
+        self._reranker = None
         self._reranker_loaded = False
-        self._llm = llm_engine      # LLM-движок (передаётся извне)
-        self._init_embeddings()     # загружаем модель эмбеддингов
-        self._init_db()             # подключаемся к ChromaDB
+        self._llm = llm_engine
+        self._init_embeddings()
+        self._init_db()
 
     def _init_embeddings(self):
         """Загружаем модель BGE-M3 для превращения текста в вектор."""
@@ -179,12 +178,12 @@ class KnowledgeBase:
         self._embeddings = HuggingFaceEmbeddings(
             model_name=config.EMBEDDING_MODEL,
             model_kwargs={"device": config.EMBEDDING_DEVICE},
-            encode_kwargs={"normalize_embeddings": True},   # нормируем векторы
+            encode_kwargs={"normalize_embeddings": True},
         )
         self._log(f"✅ Эмбеддинги загружены: {config.EMBEDDING_MODEL}")
 
     def _init_db(self):
-        """Открываем или создаём коллекцию в ChromaDB."""
+        """Подключаемся к ChromaDB (создаём коллекцию, если нет)."""
         import chromadb
         os.makedirs(config.CHROMA_DIR, exist_ok=True)
         self._client = chromadb.PersistentClient(path=config.CHROMA_DIR)
@@ -194,12 +193,12 @@ class KnowledgeBase:
         except Exception:
             self._col = self._client.create_collection(
                 name=config.COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine"},  # используем косинусное расстояние
+                metadata={"hnsw:space": "cosine"},
             )
             self._log("🆕 Новая коллекция создана")
 
     def _ensure_reranker(self):
-        """Ленивая загрузка реранкера (cross-encoder)."""
+        """Загружаем реранкер при первом использовании (ленивая загрузка)."""
         if self._reranker_loaded:
             return
         self._reranker_loaded = True
@@ -222,8 +221,8 @@ class KnowledgeBase:
         return self._llm
 
     @staticmethod
-    def _md5(text: str) -> str:
-        """Вычисляем хеш текста, чтобы не хранить дубликаты."""
+    def _md5(text):
+        """Хеш текста для проверки дубликатов."""
         return hashlib.md5(text.strip().encode()).hexdigest()
 
     def _get_splitter(self):
@@ -235,32 +234,31 @@ class KnowledgeBase:
             separators=["\n\n\n", "\n\n", "\n", ". ", "; ", " ", ""],
         )
 
-    # Индексация
-    def add_book(self, file_path: str) -> str:
+    # Индексация файла
+    def add_book(self, file_path):
         """Загрузить файл, разбить на чанки, добавить в ChromaDB."""
         filename = os.path.basename(file_path)
-        # Проверяем расширение
-        lower    = file_path.lower()
+        lower = file_path.lower()
         supported = any(lower.endswith(fmt) for fmt in config.SUPPORTED_FORMATS)
         if not supported:
             return f"Формат не поддерживается: {filename}"
 
         self._log(f"Обрабатываем: {filename}")
         try:
-            raw = load_file(file_path)  # извлекаем текст
+            raw = load_file(file_path)
         except Exception as e:
             return f"Ошибка чтения {filename}: {e}"
         if not raw.strip():
             return f"Файл пуст: {filename}"
 
-        # # Определяем разделы (чтобы потом фильтровать по ним)
+        # Определяем разделы ДО чистки текста
         sections = _detect_sections(raw)
         has_sections = len(sections) > 1
         if has_sections:
             names = [s[0] for s in sections if s[0]]
             self._log(f"Найдено {len(sections)} разделов: {', '.join(names[:5])}{'...' if len(names) > 5 else ''}")
 
-        # Очищаем текст от лишних переносов и пробелов
+        # Чистим текст от лишних пробелов и переносов
         cleaned = []
         for name, body in sections:
             body = re.sub(r'\n{3,}', '\n\n', body)
@@ -269,16 +267,15 @@ class KnowledgeBase:
         sections = cleaned
 
         splitter = self._get_splitter()
-        # Получаем ID уже существующих чанков, чтобы не дублировать
         existing_ids = set(self._col.get()["ids"]) if self._col.count() > 0 else set()
         new_chunks, new_ids, new_metas, seen = [], [], [], set()
 
         for section_name, section_text in sections:
             if not section_text.strip():
                 continue
-            chunks = splitter.split_text(section_text)  # разбиваем секцию на чанки
+            chunks = splitter.split_text(section_text)
             for chunk in chunks:
-                # Добавляем название раздела в начало чанка (для контекста)
+                # Добавляем название раздела в начало чанка
                 chunk_with_ctx = f"[{section_name}]\n{chunk}" if section_name else chunk
                 h = self._md5(chunk_with_ctx)
                 if h not in existing_ids and h not in seen:
@@ -291,14 +288,15 @@ class KnowledgeBase:
                         "section": section_name or "",
                         "chunk_id": len(new_chunks) - 1,
                     })
+
         if not new_chunks:
             return f"⏭️ {filename} — уже в базе"
 
-        # Добавляем в ChromaDB пачками по 32 чанка
+        # Добавляем в ChromaDB пачками по 32
         batch_size = 32
         for i in range(0, len(new_chunks), batch_size):
-            batch   = new_chunks[i:i+batch_size]
-            b_ids   = new_ids[i:i+batch_size]
+            batch = new_chunks[i:i+batch_size]
+            b_ids = new_ids[i:i+batch_size]
             b_metas = new_metas[i:i+batch_size]
             embeddings = self._embeddings.embed_documents(batch)
             self._col.add(ids=b_ids, embeddings=embeddings, documents=batch, metadatas=b_metas)
@@ -308,9 +306,8 @@ class KnowledgeBase:
         section_info = f" ({len(sections)} разделов)" if has_sections else ""
         return f"✅ {filename}: добавлено {len(new_chunks)} фрагментов{section_info}"
 
-    # Индексация всех файлов в папке docs/
-    def index_all_books(self) -> str:
-        """Найти все поддерживаемые файлы в docs/ и проиндексировать."""
+    def index_all_books(self):
+        """Проиндексировать все файлы из папки docs/."""
         os.makedirs(config.DOCS_DIR, exist_ok=True)
         files = []
         for ext in config.SUPPORTED_FORMATS:
@@ -325,17 +322,15 @@ class KnowledgeBase:
         results.append(f"\n📊 Итого в базе: {self._col.count()} фрагментов")
         return "\n".join(results)
 
-    # Очистка базы
-    def clear(self) -> str:
+    def clear(self):
         """Удалить всю коллекцию и создать новую."""
         self._client.delete_collection(config.COLLECTION_NAME)
         self._col = self._client.create_collection(name=config.COLLECTION_NAME, metadata={"hnsw:space": "cosine"})
         gc.collect()
         return "✅ База очищена"
 
-    # Статистика
-    def stats(self) -> dict:
-        """Вернуть количество файлов, чанков, разделов."""
+    def stats(self):
+        """Статистика: количество файлов, чанков, разделов."""
         if self._col.count() == 0:
             return {"total_chunks": 0, "total_books": 0, "books": [], "sections": []}
         data = self._col.get(include=["metadatas"])
@@ -350,8 +345,8 @@ class KnowledgeBase:
                 "books": sorted(books), "sections": sorted(sections)}
 
     # HyDE: расширение запроса
-    def _expand_query(self, query: str) -> List[str]:
-        """С помощью LLM генерируем синонимичные варианты вопроса."""
+    def _expand_query(self, query):
+        """Генерируем 3 переформулировки вопроса через LLM."""
         if not config.USE_HYDE:
             return [query]
         try:
@@ -362,8 +357,9 @@ class KnowledgeBase:
         except Exception:
             return [query]
 
-    # Поиск
+    # Поиск в ChromaDB
     def _build_where_filter(self, file_filter="all", section_filter=None):
+        """Строим фильтр для ChromaDB (по файлу и/или разделу)."""
         conditions = []
         if file_filter and file_filter != "all":
             conditions.append({"source_file": file_filter})
@@ -375,42 +371,44 @@ class KnowledgeBase:
             return conditions[0]
         return {"$and": conditions}
 
-    # Поиск в ChromaDB
-    def _raw_search(self, queries: List[str], kw_filter=None) -> List[Tuple]:
-        """Для каждого варианта запроса ищем в ChromaDB top-20."""
+    def _raw_search(self, queries, kw_filter=None):
+        """Для каждого варианта запроса ищем top-20 в ChromaDB."""
         seen, results = set(), []
         n_total = self._col.count()
         if n_total == 0:
             return []
         for q in queries:
-            q_embed = self._embeddings.embed_query(q)   # вектор запроса
-            kwargs = dict(query_embeddings=[q_embed], n_results=min(config.RETRIEVAL_TOP_K, n_total),
-                          include=["documents", "metadatas", "distances"])
+            q_embed = self._embeddings.embed_query(q)
+            kwargs = dict(
+                query_embeddings=[q_embed],
+                n_results=min(config.RETRIEVAL_TOP_K, n_total),
+                include=["documents", "metadatas", "distances"]
+            )
             if kw_filter:
                 kwargs["where"] = kw_filter
             try:
                 r = self._col.query(**kwargs)
             except Exception:
                 continue
-            # Извлекаем документы, метаданные и расстояние (чем меньше, тем лучше)
             for doc, meta, dist in zip(r["documents"][0], r["metadatas"][0], r["distances"][0]):
                 h = self._md5(doc)
-                relevance = max(0.0, 1.0 - dist)    # превращаем расстояние в сходство
+                relevance = max(0.0, 1.0 - dist)  # расстояние → сходство
                 if h not in seen and relevance >= config.MIN_RELEVANCE:
                     seen.add(h)
                     results.append((doc, meta, relevance))
         return results
 
-    # Реранкинг (уточнение порядка)
-    def _rerank_candidates(self, query: str, candidates: List[Tuple]) -> List[Tuple]:
-        """Cross-encoder пересчитывает сходство и оставляет top-7."""
+    # Реранкинг
+    def _rerank_candidates(self, query, candidates):
+        """Cross-encoder пересчитывает сходство, оставляет top-7."""
         self._ensure_reranker()
         docs = [c[0] for c in candidates]
         if self._reranker and len(docs) > 1:
             pairs = [[query, d] for d in docs]
-            scores = self._reranker.predict(pairs)  # более точные оценки
+            scores = self._reranker.predict(pairs)
             ranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
-            return [c for c, _ in ranked[:config.RERANK_TOP_K]] # Если реранкер не загружен, используем простую фильтрацию по ключевым словам
+            return [c for c, _ in ranked[:config.RERANK_TOP_K]]
+        # Если реранкер не загружен — фильтруем по ключевым словам
         words = set(re.findall(r"[А-Яа-яёЁA-Za-z]{3,}", query.lower()))
         def kw(text):
             t = text.lower()
@@ -418,15 +416,14 @@ class KnowledgeBase:
         return sorted(candidates, key=lambda c: kw(c[0]), reverse=True)[:config.RERANK_TOP_K]
 
     # Сборка контекста для LLM
-    def _build_context(self, candidates: List[Tuple]) -> str:
-        """Склеиваем отобранные фрагменты, добавляем заголовки, обрезаем до MAX_CTX_CHARS."""
+    def _build_context(self, candidates):
+        """Склеиваем фрагменты в текст для отправки в LLM."""
         parts, total = [], 0
         for i, (doc, meta, score) in enumerate(candidates):
-            fname   = meta.get("source_file", "?")
+            fname = meta.get("source_file", "?")
             section = meta.get("section", "")
-            label   = f"{fname} | {section}" if section else fname
-            block   = f"[Фрагмент {i+1} | {label} | score: {score:.2f}]\n{doc.strip()}"
-            # Если блок не влезает, обрезаем его по последней точке
+            label = f"{fname} | {section}" if section else fname
+            block = f"[Фрагмент {i+1} | {label} | score: {score:.2f}]\n{doc.strip()}"
             if total + len(block) > config.MAX_CTX_CHARS:
                 left = config.MAX_CTX_CHARS - total
                 if left < 200:
@@ -437,24 +434,25 @@ class KnowledgeBase:
             total += len(block)
         return "\n\n---\n\n".join(parts)
 
-    # Распознавание раздела из запроса (для фильтрации)
-    def get_available_sections(self) -> List[str]:
-        """Возвращает список всех разделов, которые есть в базе."""
+    # Распознавание раздела в запросе пользователя
+    def get_available_sections(self):
+        """Список всех разделов в базе."""
         if self._col.count() == 0:
             return []
         data = self._col.get(include=["metadatas"])
         return sorted({m.get("section", "") for m in data["metadatas"] if m and m.get("section")})
 
-    def find_section_in_query(self, query: str) -> Optional[str]:
+    def find_section_in_query(self, query):
         """
-        Пытается найти в запросе название раздела (с учётом падежей).
-        Возвращает точное имя раздела или None.
+        Ищет в запросе название раздела (с учётом падежей русского языка).
+        Например: "из Речи Федра" → находит раздел "Речь Федра: ..."
         """
         sections = self.get_available_sections()
         if not sections:
             return None
         query_lower = query.lower()
-        # 1. Точное вхождение
+
+        # 1. Точное вхождение названия раздела в запрос
         best, best_len = None, 0
         for section in sections:
             if section.lower() in query_lower and len(section) > best_len:
@@ -465,7 +463,8 @@ class KnowledgeBase:
                 best, best_len = section, len(key_part)
         if best:
             return best
-        # 2. По ключевым словам (с учётом падежей)
+
+        # 2. Поиск по ключевым словам с учётом падежей (стемминг)
         skip_words = {
             "речь", "речи", "речей", "глава", "главы", "часть", "части",
             "раздел", "сцена", "эрот", "эрота", "эроте", "эроту", "эротом",
@@ -483,40 +482,42 @@ class KnowledgeBase:
                         return section
         return None
 
-    # Публичнй метод поиска (используется в чате)
-    def search(self, query: str, file_filter="all", section_filter=None) -> str:
+    # Основной метод поиска (вызывается из чата)
+    def search(self, query, file_filter="all", section_filter=None):
         """
-        Выполняет полный RAG-пайплайн:
-        - HyDE
-        - поиск в ChromaDB
-        - реранкинг
-        - сборка контекста
-        Возвращает строку-контекст для LLM.
+        Полный RAG-пайплайн:
+        1. HyDE — переформулировка запроса
+        2. Поиск в ChromaDB — top-20
+        3. Реранкинг — top-7
+        4. Сборка контекста для LLM
         """
         if self._col.count() == 0:
             return "База пуста. Добавьте файлы и нажмите «Индексировать»."
 
-        # Строим фильтр для ChromaDB (по файлу и/или разделу)
         kw_filter = self._build_where_filter(file_filter, section_filter)
-        queries = self._expand_query(query) # HyDE
+        queries = self._expand_query(query)
         cands = self._raw_search(queries, kw_filter)
+
         if not cands:
-            # Если ничего не нашли, пробуем fallback-поиск
+            # Fallback: ищем без фильтров
             q_e = self._embeddings.embed_query(query)
-            fallback = dict(query_embeddings=[q_e], n_results=min(5, self._col.count()),
-                            include=["documents", "metadatas", "distances"])
+            fallback = dict(
+                query_embeddings=[q_e],
+                n_results=min(5, self._col.count()),
+                include=["documents", "metadatas", "distances"]
+            )
             if kw_filter:
                 fallback["where"] = kw_filter
             r = self._col.query(**fallback)
-            cands = [(d, m, max(0.0, 1.0-dist))
+            cands = [(d, m, max(0.0, 1.0 - dist))
                      for d, m, dist in zip(r["documents"][0], r["metadatas"][0], r["distances"][0])]
+
         if not cands:
             return ""
         return self._build_context(self._rerank_candidates(query, cands))
 
-    # Вспомогательные методы
-    def get_available_files(self) -> List[str]:
-        """Список уникальных имён файлов в базе."""
+    def get_available_files(self):
+        """Список файлов в базе (для выпадающего списка)."""
         if self._col.count() == 0:
             return []
         data = self._col.get(include=["metadatas"])

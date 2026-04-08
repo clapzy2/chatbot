@@ -1,6 +1,5 @@
-#!/usr/bin/env python3
 """
-main.py — запускает веб-интерфейс Gradio.
+main.py — запускает веб-интерфейс.
 Пользователь может загружать файлы, задавать вопросы, проходить экзамен.
 """
 import sys
@@ -20,10 +19,11 @@ import config
 from src.llm_engine import LLMEngine
 from src.knowledge_base import KnowledgeBase
 
-# Глобальные объекты
-_llm: LLMEngine     = None
-_kb:  KnowledgeBase = None
+# Глобальные объекты (создаются один раз при первом обращении)
+_llm = None
+_kb  = None
 
+# Списки ключевых слов для распознавания типа сообщения
 _REFUSAL = [
     "нет информации", "не упоминается", "не содержит",
     "не могу найти", "отсутствует", "нет данных",
@@ -48,14 +48,16 @@ _CORRECTIONS = [
 ]
 
 
-def _get_llm() -> LLMEngine:
+def _get_llm():
+    """Получить или создать LLM-движок."""
     global _llm
     if _llm is None:
         _llm = LLMEngine()
     return _llm
 
 
-def _get_kb(log=None) -> KnowledgeBase:
+def _get_kb(log=None):
+    """Получить или создать базу знаний."""
     global _kb
     if _kb is None:
         _kb = KnowledgeBase(progress_callback=log, llm_engine=_get_llm())
@@ -63,10 +65,11 @@ def _get_kb(log=None) -> KnowledgeBase:
         _kb.set_llm(_get_llm())
     return _kb
 
-# Вспомогательные функции для обработки сообщений
 
-def _is_refusal(text: str) -> bool:
-    """Проверяет, не сказала ли LLM "нет информации". (в разработке)"""
+# Вспомогательные функции
+
+def _is_refusal(text):
+    """Проверяет, сказала ли LLM 'нет информации'."""
     lower = text.lower().strip()
     if not lower:
         return True
@@ -75,22 +78,24 @@ def _is_refusal(text: str) -> bool:
     return any(p in lower[:100] for p in _REFUSAL)
 
 
-def _is_correction(text: str) -> bool:
-    """Определяет, пытается ли пользователь исправить предыдущий ответ. (в разработке)"""
+def _is_correction(text):
+    """Определяет, исправляет ли пользователь предыдущий ответ."""
     return any(c in text.lower().strip() for c in _CORRECTIONS)
 
 
-def _is_followup(text: str) -> bool:
-    """Короткие уточняющие вопросы (точно?, подробнее?) (в разработке)"""
+def _is_followup(text):
+    """Определяет уточняющие вопросы (точно? подробнее?)."""
     return len(text.split()) <= 7 and any(f in text.lower().strip() for f in _FOLLOWUPS)
 
-""" В разработке """
-def _gradio_chatbot_kwargs() -> dict:
+
+def _gradio_chatbot_kwargs():
+    """Параметры чат-бота в зависимости от версии Gradio."""
     major = gr.__version__.split(".")[0]
     return {"type": "messages"} if major == "5" else {}
 
-""" В разработке """
-def _extract_content(msg) -> str:
+
+def _extract_content(msg):
+    """Извлечь текст из сообщения (разные форматы Gradio)."""
     content = msg.get("content", "") if isinstance(msg, dict) else str(msg)
     if isinstance(content, list):
         content = " ".join(
@@ -99,8 +104,9 @@ def _extract_content(msg) -> str:
         )
     return str(content).split("\n\n*[")[0].strip()
 
-""" В разработке """
-def _history_to_context(history: list, n_last: int = 4) -> str:
+
+def _history_to_context(history, n_last=4):
+    """Превращает историю чата в текст для контекста."""
     if not history or len(history) < 2:
         return ""
     recent = history[-n_last * 2:] if len(history) > n_last * 2 else history
@@ -113,8 +119,8 @@ def _history_to_context(history: list, n_last: int = 4) -> str:
     return "\n".join(lines)
 
 
-def _get_last_qa(history: list):
-    """Извлекает последний вопрос и ответ из истории диалога. (В разработке)"""
+def _get_last_qa(history):
+    """Извлекает последний вопрос и ответ из истории."""
     last_answer, last_question = "", ""
     for msg in reversed(history):
         role = msg.get("role", "")
@@ -127,26 +133,27 @@ def _get_last_qa(history: list):
     return last_question, last_answer
 
 
-def _verify(question: str, answer: str, context: str) -> bool:
+def _verify(question, answer, context):
+    """Верификация: проверяет, подтверждается ли ответ контекстом."""
     if not config.USE_VERIFICATION or not answer or _is_refusal(answer):
         return False
-    if len(answer.strip()) < 100 and not any(w in answer.lower() for w in ["возможно", "может быть", "вероятно"]):
+    if len(answer.strip()) < 100:
         return True
     prompt = config.PROMPTS["verify"].format(topic=question, answer=answer, context=context[:4000])
     verdict = _get_llm().call(prompt, temperature=0.0, max_tokens=30)
     return "нет информации" not in verdict.lower() and "не подтверждено" not in verdict.lower()
 
 
-#  ОБРАБОТЧИКИ
+# Обработчики вкладки "Файлы"
 
 def on_index_books():
+    """Проиндексировать все файлы из папки docs/."""
     import re as _re
     log_lines = []
     def log(msg):
         log_lines.append(_re.sub(r'\[.*?\]', '', str(msg)))
         return log_lines[-1]
     try:
-        """Переиндексировать все файлы из папки docs/."""
         kb = _get_kb(log)
         result = kb.index_all_books()
         stats = kb.stats()
@@ -161,9 +168,8 @@ def on_index_books():
         return f"❌ Ошибка: {e}"
 
 
-# Функции для вкладки "Файлы"
 def on_add_book(files):
-    """Загрузить новые файлы и проиндексировать."""
+    """Загрузить файлы через интерфейс и проиндексировать."""
     if not files:
         return "Выберите файлы для загрузки"
     import shutil
@@ -184,7 +190,7 @@ def on_add_book(files):
 
 
 def on_clear_kb():
-    """Очистить базу."""
+    """Очистить базу знаний."""
     try:
         result = _get_kb().clear()
         gc.collect()
@@ -221,11 +227,12 @@ def on_refresh_files():
     return gr.Dropdown(choices=get_file_choices(), value="Все файлы")
 
 
-# ── Основной обработчик чата ────────────────
-def chat_respond(message: str, history: list, selected_file: str):
+# Обработчик чата
+
+def chat_respond(message, history, selected_file):
     """
-    Генератор, который выдаёт ответ по токену (потоково).
-    history — это список сообщений для текущего пользователя.
+    Основной обработчик: получает вопрос, ищет фрагменты,
+    генерирует ответ в режиме стриминга (токен за токеном).
     """
     if not message.strip():
         yield history
@@ -241,25 +248,25 @@ def chat_respond(message: str, history: list, selected_file: str):
         return
 
     try:
-        kb  = _get_kb()
+        kb = _get_kb()
         llm = _get_llm()
         file_filter = "all" if selected_file == "Все файлы" else selected_file
 
-        # Проверяем, является ли сообщение исправлением или уточнением
-        is_corr = _is_correction(message)# ищем по предыдущему вопросу
-        is_fu   = _is_followup(message)
+        # Определяем тип сообщения: исправление или уточнение
+        is_corr = _is_correction(message)
+        is_fu = _is_followup(message)
         search_query = message
         prev_question, prev_answer = "", ""
 
         if is_corr or is_fu:
             prev_question, prev_answer = _get_last_qa(history)
             if prev_question:
-                search_query = prev_question    # ищем по предыдущему вопросу
+                search_query = prev_question  # ищем по предыдущему вопросу
 
-        # Определяем, о каком разделе идёт речь (чтобы отфильтровать)
+        # Определяем раздел для фильтрации
         section_filter = kb.find_section_in_query(message)
 
-        # Ищем релевантные фрагменты
+        # Ищем релевантные фрагменты (RAG-пайплайн)
         context = kb.search(search_query, file_filter=file_filter, section_filter=section_filter)
         if not context:
             yield history + [
@@ -268,7 +275,7 @@ def chat_respond(message: str, history: list, selected_file: str):
             ]
             return
 
-        # Выбираем нужный промпт
+        # Выбираем промпт: обычный вопрос или исправление
         if is_corr and prev_question and prev_answer:
             full_prompt = config.PROMPTS["correction"].format(
                 system=config.SYSTEM_PROMPT, context=context,
@@ -286,7 +293,7 @@ def chat_respond(message: str, history: list, selected_file: str):
                     system=config.SYSTEM_PROMPT, topic=message, context=context
                 )
 
-        # Генерируем ответ потоково
+        # Генерируем ответ потоково (токен за токеном)
         answer = ""
         new_history = history + [
             {"role": "user", "content": message},
@@ -297,6 +304,7 @@ def chat_respond(message: str, history: list, selected_file: str):
             new_history[-1]["content"] = answer
             yield new_history
 
+        # Верификация ответа
         if config.USE_VERIFICATION and answer and not _is_refusal(answer):
             if _verify(message, answer, context):
                 new_history[-1]["content"] = answer.strip() + "\n\n*[✓ подтверждено]*"
@@ -312,63 +320,52 @@ def chat_respond(message: str, history: list, selected_file: str):
         ]
 
 
-# Режим Эказмена
-def exam_generate(n_questions: int, selected_file: str):
+# Обработчики режима "Экзамен"
+
+def exam_generate(n_questions, selected_file):
     """Сгенерировать вопросы по тексту."""
     try:
-        kb  = _get_kb()
+        kb = _get_kb()
         llm = _get_llm()
         if kb.stats()["total_chunks"] == 0:
             return "❌ База пуста. Загрузите файлы и проиндексируйте."
-
         file_filter = "all" if selected_file == "Все файлы" else selected_file
-        # Ищем общий контекст (по ключевым словам)
         context = kb.search("основные идеи темы содержание", file_filter=file_filter)
         if not context:
             return "❌ Не удалось найти контекст для генерации вопросов."
-
-        prompt = config.PROMPTS["exam_generate"].format(
-            n=int(n_questions), context=context
-        )
-        questions = llm.call(prompt, temperature=0.3, max_tokens=1500)
-        return questions.strip()
+        prompt = config.PROMPTS["exam_generate"].format(n=int(n_questions), context=context)
+        return llm.call(prompt, temperature=0.3, max_tokens=1500).strip()
     except Exception as e:
         return f"❌ Ошибка: {e}"
 
 
-def exam_check(question: str, student_answer: str, selected_file: str):
-    """Проверяет ответ студента по базе знаний"""
+def exam_check(question, student_answer, selected_file):
+    """Проверить ответ студента по базе знаний."""
     if not question.strip():
         return "⚠️ Введите вопрос"
     if not student_answer.strip():
         return "⚠️ Введите ваш ответ"
     try:
-        kb  = _get_kb()
+        kb = _get_kb()
         llm = _get_llm()
-
         file_filter = "all" if selected_file == "Все файлы" else selected_file
         context = kb.search(question, file_filter=file_filter)
         if not context:
             return "❌ Не удалось найти информацию по этому вопросу в базе."
-
         prompt = config.PROMPTS["exam_check"].format(
-            context=context,
-            question=question,
-            answer=student_answer,
+            context=context, question=question, answer=student_answer,
         )
-        result = llm.call(prompt, temperature=0.1, max_tokens=800)
-        return result.strip()
+        return llm.call(prompt, temperature=0.1, max_tokens=800).strip()
     except Exception as e:
         return f"❌ Ошибка: {e}"
 
 
-
-#  Построение GUI
+# Построение веб-интерфейса
 
 def build_gui():
     chatbot_kwargs = _gradio_chatbot_kwargs()
 
-    with gr.Blocks(title="TextBot", css="""
+    with gr.Blocks(title="Бонч База Знаний", css="""
         footer {display: none !important;}
         .built-with {display: none !important;}
         .show-api {display: none !important;}
@@ -386,19 +383,17 @@ def build_gui():
         </div>""")
 
         with gr.Tabs():
-            # Вкладка Чат
+
+            # Вкладка "Чат"
             with gr.TabItem("💬 Чат"):
                 gr.Markdown("### Вопросы по загруженным текстам")
-
                 with gr.Row():
                     file_dropdown = gr.Dropdown(
                         choices=get_file_choices(), value="Все файлы",
                         label="📄 Искать в файле", scale=3, interactive=True,
                     )
                     refresh_btn = gr.Button("🔄", scale=1, size="sm")
-
                 chatbot = gr.Chatbot(height=480, show_label=False, **chatbot_kwargs)
-
                 with gr.Row():
                     chat_in = gr.Textbox(
                         placeholder="Задайте вопрос...",
@@ -408,18 +403,15 @@ def build_gui():
                 chat_clear = gr.Button("🗑️ Очистить историю", size="sm")
 
                 refresh_btn.click(on_refresh_files, outputs=file_dropdown)
-
                 chat_btn.click(
                     chat_respond, inputs=[chat_in, chatbot, file_dropdown], outputs=chatbot
                 ).then(lambda: "", outputs=chat_in)
-
                 chat_in.submit(
                     chat_respond, inputs=[chat_in, chatbot, file_dropdown], outputs=chatbot
                 ).then(lambda: "", outputs=chat_in)
-
                 chat_clear.click(lambda: [], outputs=chatbot)
 
-            # Вкладка Файлы
+            # Вкладка "Файлы"
             with gr.TabItem("📖 Файлы"):
                 gr.Markdown("### Управление базой знаний")
                 with gr.Row():
@@ -428,19 +420,18 @@ def build_gui():
                                               file_types=config.SUPPORTED_FORMATS)
                         book_up_btn = gr.Button("📥 Загрузить и индексировать", variant="primary")
                     with gr.Column():
-                        book_idx_btn   = gr.Button("🔄 Индексировать папку docs/", variant="secondary")
+                        book_idx_btn = gr.Button("🔄 Индексировать папку docs/", variant="secondary")
                         book_stats_btn = gr.Button("📊 Статистика")
-                        book_clr_btn   = gr.Button("🗑️ Очистить базу", variant="stop")
+                        book_clr_btn = gr.Button("🗑️ Очистить базу", variant="stop")
                 book_out = gr.Textbox(label="Результат", lines=10)
                 book_up_btn.click(on_add_book, book_upload, book_out)
                 book_idx_btn.click(on_index_books, None, book_out)
                 book_stats_btn.click(on_stats, None, book_out)
                 book_clr_btn.click(on_clear_kb, None, book_out)
 
-            # Вкладка Экзамен
+            # Вкладка "Экзамен"
             with gr.TabItem("📝 Экзамен"):
                 gr.Markdown("### Проверка знаний по загруженным текстам")
-
                 with gr.Row():
                     exam_file = gr.Dropdown(
                         choices=get_file_choices(), value="Все файлы",
@@ -451,15 +442,12 @@ def build_gui():
                         label="Кол-во вопросов", scale=2,
                     )
                     exam_gen_btn = gr.Button("🎯 Сгенерировать вопросы", variant="primary", scale=2)
-
                 exam_questions = gr.Textbox(
                     label="Вопросы", lines=12, interactive=False,
                     placeholder="Нажмите «Сгенерировать вопросы»..."
                 )
-
                 gr.Markdown("---")
                 gr.Markdown("### Проверка ответа")
-
                 exam_question_input = gr.Textbox(
                     label="Вопрос (скопируйте из списка выше)",
                     placeholder="Вставьте вопрос...", lines=2,
@@ -469,20 +457,12 @@ def build_gui():
                     placeholder="Напишите ваш ответ...", lines=4,
                 )
                 exam_check_btn = gr.Button("✅ Проверить ответ", variant="primary")
-                exam_result = gr.Textbox(
-                    label="Результат проверки", lines=10, interactive=False,
-                )
+                exam_result = gr.Textbox(label="Результат проверки", lines=10, interactive=False)
 
-                # Обработчики
-                exam_gen_btn.click(
-                    exam_generate, inputs=[exam_n, exam_file], outputs=exam_questions
-                )
-                exam_check_btn.click(
-                    exam_check,
-                    inputs=[exam_question_input, exam_answer_input, exam_file],
-                    outputs=exam_result
-                )
+                exam_gen_btn.click(exam_generate, inputs=[exam_n, exam_file], outputs=exam_questions)
+                exam_check_btn.click(exam_check, inputs=[exam_question_input, exam_answer_input, exam_file], outputs=exam_result)
 
+            # Вкладка "О системе"
             with gr.TabItem("ℹ️ О системе"):
                 gr.Markdown("""### Бонч База Знаний
 Многопользовательская система для работы с учебными текстами.
@@ -491,13 +471,13 @@ def build_gui():
 1. Перейдите во вкладку «📖 Файлы» и загрузите учебные материалы
 2. Нажмите «Загрузить и индексировать»
 3. Вернитесь в «💬 Чат»
-4. Выберите нужный файл в выпадающем списке «Искать в файле» (или оставьте «Все файлы» для поиска по всем)
+4. Выберите нужный файл в выпадающем списке «Искать в файле»
 5. Задавайте вопросы — бот ответит с цитатами из текста
 6. Для проверки знаний — вкладка «📝 Экзамен»
 
 **Поддерживаемые форматы:** PDF, TXT, EPUB, DOCX, Markdown, FB2, FB2.ZIP, HTML
 
-**Языки текстов:** русский, английский и другие. Можно загрузить текст на английском и задавать вопросы на русском — бот найдёт нужные фрагменты.
+**Языки текстов:** русский, английский и другие. Можно загрузить текст на английском и задавать вопросы на русском.
 """)
                 gr.Markdown("### Оформление")
                 theme_btn = gr.Button("🌙 Переключить тему (светлая / тёмная)", size="sm")
@@ -516,22 +496,22 @@ def build_gui():
     return app
 
 
-#  Запуск
+# Запуск приложения
 
 if __name__ == "__main__":
+    # Создаём нужные папки
     for d in [config.DOCS_DIR, config.OUTPUT_DIR, config.MODELS_DIR, config.DATA_DIR]:
         os.makedirs(d, exist_ok=True)
 
+    # Определяем режим работы для вывода в консоль
     mode = config.LLM_MODE
     if mode == "api":
         llm_label = f"API / {getattr(config, 'API_MODEL', '?')}"
-    elif mode == "ollama":
-        llm_label = f"OLLAMA / {config.OLLAMA_MODEL}"
     else:
-        llm_label = f"LLAMA_CPP / {os.path.basename(config.LLM_MODEL_PATH)}"
+        llm_label = f"OLLAMA / {config.OLLAMA_MODEL}"
 
     print("=" * 55)
-    print("  📚 Бонч База Знаний v3.0")
+    print("  Бонч База Знаний v3.0")
     print(f"  LLM        : {llm_label}")
     print(f"  Эмбеддинги : {config.EMBEDDING_MODEL}")
     print(f"  Реранкер   : {config.RERANKER_MODEL}")
