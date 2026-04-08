@@ -6,12 +6,12 @@ __pycache__/
 venv/
 env/
 
+# Данные (создаются автоматически)
 data/chromadb/
 data/chat_history.json
-models/*.gguf
 
-# Output
-output/
+# Gradio (создаётся автоматически)
+.gradio/
 
 # IDE
 .idea/
@@ -23,5 +23,5 @@ output/
 .DS_Store
 Thumbs.db
 
-# Secrets
+# Секреты
 .env

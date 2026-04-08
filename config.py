@@ -9,9 +9,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Папки проекта
 DOCS_DIR   = os.path.join(BASE_DIR, "docs")      # учебные тексты
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")     # результаты
 DATA_DIR   = os.path.join(BASE_DIR, "data")       # данные
-MODELS_DIR = os.path.join(BASE_DIR, "models")     # локальные модели
 CHROMA_DIR = os.path.join(DATA_DIR, "chromadb")   # векторная база данных
 
 
