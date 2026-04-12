@@ -170,7 +170,7 @@ class KnowledgeBase:
 
     def _init_embeddings(self):
         """Загружаем модель BGE-M3 для превращения текста в вектор."""
-        self._log("🔄 Загружаем embedding-модель...")
+        self._log("Загружаем embedding-модель...")
         try:
             from langchain_huggingface import HuggingFaceEmbeddings
         except ImportError:
@@ -180,7 +180,7 @@ class KnowledgeBase:
             model_kwargs={"device": config.EMBEDDING_DEVICE},
             encode_kwargs={"normalize_embeddings": True},
         )
-        self._log(f"✅ Эмбеддинги загружены: {config.EMBEDDING_MODEL}")
+        self._log(f"Эмбеддинги загружены: {config.EMBEDDING_MODEL}")
 
     def _init_db(self):
         """Подключаемся к ChromaDB (создаём коллекцию, если нет)."""
@@ -189,13 +189,13 @@ class KnowledgeBase:
         self._client = chromadb.PersistentClient(path=config.CHROMA_DIR)
         try:
             self._col = self._client.get_collection(config.COLLECTION_NAME)
-            self._log(f"📂 Коллекция: {self._col.count()} фрагментов")
+            self._log(f"Коллекция: {self._col.count()} фрагментов")
         except Exception:
             self._col = self._client.create_collection(
                 name=config.COLLECTION_NAME,
                 metadata={"hnsw:space": "cosine"},
             )
-            self._log("🆕 Новая коллекция создана")
+            self._log("Новая коллекция создана")
 
     def _ensure_reranker(self):
         """Загружаем реранкер при первом использовании (ленивая загрузка)."""

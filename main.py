@@ -2,11 +2,27 @@
 main.py — запускает веб-интерфейс.
 Пользователь может загружать файлы, задавать вопросы, проходить экзамен.
 """
-import sys
+import warnings
+warnings.filterwarnings("ignore")
+
 import os
+import sys
 import gc
-import json
-import threading
+
+# Подавляем предупреждения от torch, HuggingFace и других библиотек
+# (нужно ДО импорта этих библиотек)
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TORCH_DISTRIBUTED_DEBUG"] = "OFF"
+os.environ["GLOG_minloglevel"] = "3"
+
+import logging
+logging.getLogger("torch").setLevel(logging.CRITICAL)
+logging.getLogger("torch.distributed").setLevel(logging.CRITICAL)
+logging.getLogger("transformers").setLevel(logging.CRITICAL)
+logging.getLogger("sentence_transformers").setLevel(logging.CRITICAL)
+logging.getLogger("huggingface_hub").setLevel(logging.CRITICAL)
 
 # Отключаем прокси для API
 os.environ["NO_PROXY"] = "localhost,127.0.0.1,api.groq.com,openrouter.ai"
@@ -339,6 +355,33 @@ def exam_generate(n_questions, selected_file):
         return f"❌ Ошибка: {e}"
 
 
+def _parse_questions(text):
+    """Разбирает текст с вопросами на отдельные пункты."""
+    import re
+    lines = text.strip().split("\n")
+    questions = []
+    for line in lines:
+        line = line.strip()
+        # Убираем нумерацию: "1. ", "1) ", "- " и т.д.
+        cleaned = re.sub(r'^[\d]+[.)]\s*', '', line).strip()
+        cleaned = re.sub(r'^[-•]\s*', '', cleaned).strip()
+        if cleaned and len(cleaned) > 10 and "?" in cleaned:
+            questions.append(cleaned)
+    return questions
+
+
+def exam_generate_with_choices(n_questions, selected_file):
+    """Генерирует вопросы и возвращает текст + список для выпадающего меню."""
+    text = exam_generate(n_questions, selected_file)
+    if text.startswith("❌"):
+        return text, gr.Dropdown(choices=[], value=None)
+    questions = _parse_questions(text)
+    if not questions:
+        # Если парсинг не нашёл вопросов — пробуем разбить по строкам
+        questions = [l.strip() for l in text.split("\n") if l.strip() and len(l.strip()) > 10]
+    return text, gr.Dropdown(choices=questions, value=questions[0] if questions else None)
+
+
 def exam_check(question, student_answer, selected_file):
     """Проверить ответ студента по базе знаний."""
     if not question.strip():
@@ -365,7 +408,7 @@ def exam_check(question, student_answer, selected_file):
 def build_gui():
     chatbot_kwargs = _gradio_chatbot_kwargs()
 
-    with gr.Blocks(title="Бонч База Знаний", css="""
+    with gr.Blocks(title="BonchMind", css="""
         footer {display: none !important;}
         .built-with {display: none !important;}
         .show-api {display: none !important;}
@@ -376,7 +419,7 @@ def build_gui():
 
         gr.HTML("""
         <div style="text-align:center;padding:16px 0 8px">
-            <h1 style="font-size:2em;font-weight:bold;">Бонч База Знаний</h1>
+            <h1 style="font-size:2em;font-weight:bold;">BonchMind</h1>
             <p style="color:#888;font-size:1em;">
                 Умный ассистент по учебным текстам
             </p>
@@ -443,14 +486,14 @@ def build_gui():
                     )
                     exam_gen_btn = gr.Button("🎯 Сгенерировать вопросы", variant="primary", scale=2)
                 exam_questions = gr.Textbox(
-                    label="Вопросы", lines=12, interactive=False,
+                    label="Сгенерированные вопросы", lines=12, interactive=False,
                     placeholder="Нажмите «Сгенерировать вопросы»..."
                 )
                 gr.Markdown("---")
                 gr.Markdown("### Проверка ответа")
-                exam_question_input = gr.Textbox(
-                    label="Вопрос (скопируйте из списка выше)",
-                    placeholder="Вставьте вопрос...", lines=2,
+                exam_question_select = gr.Dropdown(
+                    choices=[], value=None,
+                    label="📋 Выберите вопрос", interactive=True,
                 )
                 exam_answer_input = gr.Textbox(
                     label="Ваш ответ",
@@ -459,12 +502,21 @@ def build_gui():
                 exam_check_btn = gr.Button("✅ Проверить ответ", variant="primary")
                 exam_result = gr.Textbox(label="Результат проверки", lines=10, interactive=False)
 
-                exam_gen_btn.click(exam_generate, inputs=[exam_n, exam_file], outputs=exam_questions)
-                exam_check_btn.click(exam_check, inputs=[exam_question_input, exam_answer_input, exam_file], outputs=exam_result)
+                # После генерации — обновляем и текстовое поле, и выпадающий список
+                exam_gen_btn.click(
+                    exam_generate_with_choices,
+                    inputs=[exam_n, exam_file],
+                    outputs=[exam_questions, exam_question_select]
+                )
+                exam_check_btn.click(
+                    exam_check,
+                    inputs=[exam_question_select, exam_answer_input, exam_file],
+                    outputs=exam_result
+                )
 
             # Вкладка "О системе"
             with gr.TabItem("ℹ️ О системе"):
-                gr.Markdown("""### Бонч База Знаний
+                gr.Markdown("""### BonchMind
 Многопользовательская система для работы с учебными текстами.
 
 **Как пользоваться:**
@@ -500,7 +552,7 @@ def build_gui():
 
 if __name__ == "__main__":
     # Создаём нужные папки
-    for d in [config.DOCS_DIR, config.OUTPUT_DIR, config.MODELS_DIR, config.DATA_DIR]:
+    for d in [config.DOCS_DIR, config.DATA_DIR]:
         os.makedirs(d, exist_ok=True)
 
     # Определяем режим работы для вывода в консоль
@@ -511,7 +563,7 @@ if __name__ == "__main__":
         llm_label = f"OLLAMA / {config.OLLAMA_MODEL}"
 
     print("=" * 55)
-    print("  Бонч База Знаний v3.0")
+    print("  BonchMind v3.0")
     print(f"  LLM        : {llm_label}")
     print(f"  Эмбеддинги : {config.EMBEDDING_MODEL}")
     print(f"  Реранкер   : {config.RERANKER_MODEL}")

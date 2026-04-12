@@ -2,6 +2,9 @@
 llm_engine.py — подключение к LLM (нейросети для генерации текста).
 Поддерживает два режима: API (облако) и Ollama (локально).
 """
+import warnings
+warnings.filterwarnings("ignore")
+
 import os
 import sys
 import json
@@ -78,8 +81,6 @@ class _ApiBackend:
             self._api_key = os.environ.get("API_KEY", "")
         if not self._api_key:
             print("⚠️ API_KEY не задан! Установите в config.py")
-        else:
-            print(f"🔑 API ключ: {self._api_key[:10]}...")
 
     def generate(self, prompt, temperature, max_tokens, stream=False):
         """Отправляет запрос к OpenRouter API."""
@@ -170,10 +171,8 @@ class LLMEngine:
         mode = config.LLM_MODE
         if mode == "ollama":
             self._backend = _OllamaBackend()
-            print(f"🤖 LLM: Ollama → {config.OLLAMA_MODEL}")
         else:
             self._backend = _ApiBackend()
-            print(f"🤖 LLM: API → {getattr(config, 'API_MODEL', '?')}")
 
     def call(self, prompt, temperature=None, max_tokens=None):
         """Отправить запрос и получить полный ответ (строкой)."""

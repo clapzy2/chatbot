@@ -18,7 +18,7 @@ LLM_MODE = "api"
 
 # Настройки API (OpenRouter — облачный режим)
 API_URL   = "https://openrouter.ai/api/v1/chat/completions"
-API_KEY   = "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"  # получить на openrouter.ai
+API_KEY   = "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"  # получить на openrouter.ai
 API_MODEL = "qwen/qwen3-32b"
 
 # Настройки Ollama (локальный режим, без интернета)
