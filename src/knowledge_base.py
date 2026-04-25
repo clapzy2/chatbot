@@ -107,9 +107,9 @@ def _detect_sections(text):
     """
     lines = text.split("\n")
     header_patterns = [
-        r'^\s{2,}[А-ЯЁA-Z][А-Яа-яёЁA-Za-z\s:–-\-,.]+\s*$',
+        r'^\s{2,}[А-ЯЁA-Z][А-Яа-яёЁA-Za-z\s:–\\.,-]+\s*$',
         r'^\s*(Глава|Часть|Раздел|Chapter|Part|Section)\s+[\dIVXLCDMivxlcdm]+.*$',
-        r'^\s*[А-ЯЁA-Z\s:–-\-]{10,}\s*$',
+        r'^\s*[А-ЯЁA-Z\s:–\\-]{10,}\s*$',
     ]
     sections = []
     current_header = ""
@@ -207,7 +207,7 @@ class KnowledgeBase:
         try:
             from sentence_transformers import CrossEncoder
             self._reranker = CrossEncoder(config.RERANKER_MODEL)
-            self._log(f"✅ Reranker: {config.RERANKER_MODEL}")
+            self._log(f"Reranker: {config.RERANKER_MODEL}")
         except Exception as e:
             self._log(f"Reranker недоступен: {e}")
 
@@ -465,23 +465,27 @@ class KnowledgeBase:
         if best:
             return best
 
-        # Доработать
-        # 2. Поиск по ключевым словам с учётом падежей (стемминг)
-        skip_words = {
-            "речь", "речи", "речей", "глава", "главы", "часть", "части",
-            "раздел", "сцена", "эрот", "эрота", "эроте", "эроту", "эротом",
-            "любовь", "любви", "стремление", "происхождение", "совершенства",
-            "древнейшее", "целостности", "овладение", "благом", "панегирик",
-            "природе", "разлит", "заключительная",
-        }
-        query_words = set(re.findall(r"[А-Яа-яёЁ]{3,}", query_lower))
-        for section in sections:
-            names = [w for w in re.findall(r"[А-Яа-яёЁ]{4,}", section.lower()) if w not in skip_words]
-            for name in names:
-                stem = name[:max(4, len(name)-2)]
-                for qw in query_words:
-                    if qw.startswith(stem) or name.startswith(qw[:max(4, len(qw)-2)]):
+        # 2. Умный поиск через PyMorphy3 (игнорируем падежи)
+        try:
+            import pymorphy3
+            morph = pymorphy3.MorphAnalyzer()
+
+            # Нормализуем слова в запросе (приводим к именительному падежу)
+            query_words = [morph.parse(w)[0].normal_form for w in re.findall(r"[а-яё]+", query_lower)]
+
+            for section in sections:
+                # Нормализуем слова в названии раздела
+                sec_words = [morph.parse(w)[0].normal_form for w in re.findall(r"[а-яё]+", section.lower())]
+                # Выделяем ядро названия (слова длиннее 3 букв)
+                sec_core = [w for w in sec_words if len(w) > 3]
+
+                # Если хотя бы первые 2 значимых слова из названия раздела есть в запросе — это он
+                if sec_core and len(sec_core) >= 2:
+                    if sec_core[0] in query_words and sec_core[1] in query_words:
                         return section
+        except ImportError:
+            pass  # Если библиотека не установлена, возвращаем None (фильтр не применится)
+
         return None
 
     # Основной метод поиска (вызывается из чата)
@@ -508,8 +512,6 @@ class KnowledgeBase:
                 n_results=min(5, self._col.count()),
                 include=["documents", "metadatas", "distances"]
             )
-            if kw_filter:
-                fallback["where"] = kw_filter
             r = self._col.query(**fallback)
             cands = [(d, m, max(0.0, 1.0 - dist))
                      for d, m, dist in zip(r["documents"][0], r["metadatas"][0], r["distances"][0])]

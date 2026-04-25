@@ -48,8 +48,8 @@ _REFUSAL = [
 _FOLLOWUPS = [
     "точно", "уверен", "правда", "докажи", "обоснуй",
     "подробнее", "аргументы", "аргумент", "объясни", "почему",
-    "зачем", "пример", "примеры", "поясни", "расскажи подробнее",
-    "как так", "серьёзно", "не понял", "уточни", "ещё",
+    "зачем", "пример", "примеры", "поясни", "разъясни", "расскажи подробнее",
+    "как так", "серьёзно", "не понял", "уточни", "ещё", "что такое",
     "а что", "а как", "а почему", "а зачем", "расскажи ещё",
     "продолжи", "дальше",
 ]
@@ -94,14 +94,18 @@ def _is_refusal(text):
 
 def _is_correction(text):
     """Определяет, исправляет ли пользователь предыдущий ответ."""
-    return any(c in text.lower().strip() for c in _CORRECTIONS)
-    # Доработать
+    lower = text.lower().strip()
+    if len(lower.split()) > 20: # Слишком длинное для исправления
+        return False
+    return any(lower.startswith(c) or f" {c} " in lower for c in _CORRECTIONS)
 
 
 def _is_followup(text):
     """Определяет уточняющие вопросы (точно? подробнее?)."""
-    return len(text.split()) <= 7 and any(f in text.lower().strip() for f in _FOLLOWUPS)
-    # Доработать
+    lower = text.lower().strip()
+    if len(lower.split()) <= 12: # Увеличили порог до 12 слов
+        return any(lower == f or lower.startswith(f) for f in _FOLLOWUPS)
+    return False
 
 
 def _gradio_chatbot_kwargs():
@@ -161,7 +165,7 @@ def on_index_books():
         kb = _get_kb(log)
         result = kb.index_all_books()
         stats = kb.stats()
-        gc.collect()
+        # gc.collect()
         out = f"{result}\n\n📊 Итого:\n  Файлов: {stats['total_books']}\n  Фрагментов: {stats['total_chunks']}"
         if stats["books"]:
             out += "\n  Файлы: " + ", ".join(stats["books"])
@@ -186,7 +190,7 @@ def on_add_book(files):
             dest = os.path.join(config.DOCS_DIR, os.path.basename(src))
             shutil.copy2(src, dest)
             results.append(kb.add_book(dest))
-        gc.collect()
+        # gc.collect()
         stats = kb.stats()
         return "\n".join(results) + f"\n\n📊 Всего: {stats['total_books']} файлов, {stats['total_chunks']} фрагментов"
     except Exception as e:
@@ -325,7 +329,7 @@ def chat_respond(message, history, selected_file):
 def build_gui():
     chatbot_kwargs = _gradio_chatbot_kwargs()
 
-    with gr.Blocks(title="Бонч База Знаний", css="""
+    with gr.Blocks(title="BonchMind", css="""
         footer {display: none !important;}
         .built-with {display: none !important;}
         .show-api {display: none !important;}
@@ -336,7 +340,7 @@ def build_gui():
 
         gr.HTML("""
         <div style="text-align:center;padding:16px 0 8px">
-            <h1 style="font-size:2em;font-weight:bold;">Бонч База Знаний</h1>
+            <h1 style="font-size:2em;font-weight:bold;">BonchMind</h1>
             <p style="color:#888;font-size:1em;">
                 Умный ассистент по учебным текстам
             </p>
@@ -391,7 +395,7 @@ def build_gui():
 
             # Вкладка "О системе"
             with gr.TabItem("ℹ️ О системе"):
-                gr.Markdown("""### Бонч База Знаний
+                gr.Markdown("""### BonchMind
 Многопользовательская система для работы с учебными текстами.
 
 **Как пользоваться:**
@@ -434,15 +438,13 @@ if __name__ == "__main__":
     else:
         llm_label = f"OLLAMA / {config.OLLAMA_MODEL}"
 
-    print("=" * 55)
-    print("  Бонч База Знаний v3.0")
-    print(f"  LLM        : {llm_label}")
-    print(f"  Эмбеддинги : {config.EMBEDDING_MODEL}")
-    print(f"  Реранкер   : {config.RERANKER_MODEL}")
-    print(f"  Чанк       : {config.CHUNK_SIZE} симв.")
-    print(f"  HyDE       : {'вкл' if config.USE_HYDE else 'выкл'}")
-    print(f"  Gradio     : v{gr.__version__}")
-    print("=" * 55)
+    print("BonchMind")
+    print(f" LLM: {llm_label}")
+    print(f"Эмбеддинги: {config.EMBEDDING_MODEL}")
+    print(f"Реранкер: {config.RERANKER_MODEL}")
+    print(f" Чанк: {config.CHUNK_SIZE} симв.")
+    print(f"HyDE: {'вкл' if config.USE_HYDE else 'выкл'}")
+    print(f"Gradio: v{gr.__version__}")
 
     app = build_gui()
     app.launch(

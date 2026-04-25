@@ -30,7 +30,7 @@ class _OllamaBackend:
             "prompt": prompt,
             "stream": stream,
             "options": {
-                "temperature":    temperature,
+                "temperature":  temperature,
                 "top_p":          config.LLM_TOP_P,
                 "num_predict":    max_tokens,
                 "repeat_penalty": config.LLM_REPEAT_PENALTY,
@@ -80,7 +80,7 @@ class _ApiBackend:
         if not self._api_key:
             self._api_key = os.environ.get("API_KEY", "")
         if not self._api_key:
-            print("⚠️ API_KEY не задан! Установите в config.py")
+            print("API_KEY не задан! Установите в config.py")
 
     def generate(self, prompt, temperature, max_tokens, stream=False):
         """Отправляет запрос к OpenRouter API."""
